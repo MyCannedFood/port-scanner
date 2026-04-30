@@ -18,8 +18,17 @@ def port_scan(target_ip):
 
             if result == 0:
                 sock.send(b"\r\n")
-                respones = sock.recv(1024)
-                print(respones)
+                
+                response = sock.recv(1024)
+                response = response.split(b"-")
+                response = response[2].split(b"_")
+
+                service = response[0].decode()
+                
+                version = response[1].split(b" ")
+                version = version[0].decode()
+                
+                print(f"{service} {version}")
                 print("Port {}: open".format(port))
 
             sock.close()
