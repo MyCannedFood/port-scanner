@@ -5,6 +5,7 @@ import time
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys
 from tqdm import tqdm
 from threading import Lock
 
@@ -25,8 +26,23 @@ SERVICE_PORTS = {
     8443: "HTTPS-Alt", 27017: "MongoDB",
 }
 
+class Tee:
+    def __init__(self, filepath):
+        self.file = open(filepath, "w")
+        self.stdout = sys.stdout
+
+    def write(self, text):
+        self.stdout.write(text)
+        self.file.write(text)
+
+    def flush(self):
+        self.stdout.flush()
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+
 print_lock = Lock()
-scan_count = 0
 open_ports = []
 progress_lock = Lock()
 
@@ -63,15 +79,11 @@ def get_cve_text(service, version):
     return "".join(lines)
 
 def scan_port(ip, port, timeout, delay):
-    global scan_count
     time.sleep(delay)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
 
     result = sock.connect_ex((ip, port))
-
-    with progress_lock:
-        scan_count += 1
 
     if result != 0:
         sock.close()
@@ -117,8 +129,7 @@ def scan_port(ip, port, timeout, delay):
 
 def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
               timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
-    global scan_count, open_ports
-    scan_count = 0
+    global open_ports
     open_ports = []
 
     try:
@@ -168,6 +179,7 @@ def main():
                         help=f"Number of worker threads (default: {DEFAULT_THREADS})")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
                         help=f"Delay between scans in seconds (default: {DEFAULT_DELAY})")
+    parser.add_argument("-o", "--output", help="Save results to file")
     args = parser.parse_args()
 
     try:
@@ -179,7 +191,17 @@ def main():
             print("Invalid IP address or hostname")
             return
 
-    port_scan(args.target, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
+    tee = Tee(args.output) if args.output else None
+    if tee:
+        sys.stdout = tee
+
+    try:
+        port_scan(args.target, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
+    finally:
+        if tee:
+            sys.stdout = tee.stdout
+            tee.close()
+            print(f"Results saved to {args.output}")
 
 if __name__ == "__main__":
     main()

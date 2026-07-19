@@ -8,17 +8,19 @@ Multi-threaded TCP port scanner with banner grabbing, service detection, and CVE
 - **Banner grabbing** — captures service banners from open ports
 - **Service detection** — fallback to well-known port mapping when banner parsing fails
 - **CVE lookup** — queries NVD API for known vulnerabilities
-- **Configurable** — port range, timeout, threads, and delay via CLI arguments
+- **Configurable** — port range, timeout, threads, delay, and output file via CLI arguments
+- **Progress bar** — real-time scan progress with `tqdm`
+- **Save output** — export results to a file with `-o`
 
 ## Requirements
 
 - Python 3.7+
-- `requests` library
+- `requests`, `tqdm` libraries
 
 Install dependencies:
 
 ```bash
-pip install requests
+pip install requests tqdm
 ```
 
 ## Usage
@@ -37,6 +39,7 @@ python portScanner.py <target> [options]
 | `--timeout` | 1 | Socket timeout in seconds |
 | `--threads` | 50 | Number of worker threads |
 | `--delay` | 0 | Delay between scans in seconds |
+| `-o, --output` | — | Save results to file |
 
 ### Examples
 
@@ -52,6 +55,9 @@ python portScanner.py 10.0.0.1 --timeout 0.5 --threads 100
 
 # Slow scan with delay to avoid detection
 python portScanner.py 192.168.1.1 --delay 0.1 --threads 10
+
+# Save results to file
+python portScanner.py scanme.nmap.org -o results.txt
 ```
 
 ## Output
