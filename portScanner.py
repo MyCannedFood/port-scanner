@@ -5,6 +5,7 @@ import time
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 from threading import Lock
 
 DEFAULT_PORT_START = 20
@@ -137,7 +138,8 @@ def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_EN
         with ThreadPoolExecutor(max_workers=threads) as executor:
             futures = {executor.submit(scan_port, ip, port, timeout, delay): port
                        for port in range(port_start, port_end + 1)}
-            for future in as_completed(futures):
+            for _ in tqdm(as_completed(futures), total=total_ports,
+                          desc="Scanning", unit="port", ncols=80):
                 pass
 
         end_time = datetime.now()
