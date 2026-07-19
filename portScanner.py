@@ -11,6 +11,17 @@ DEFAULT_PORT_END = 3306
 DEFAULT_TIMEOUT = 1
 DEFAULT_THREADS = 50
 
+SERVICE_PORTS = {
+    20: "FTP-data", 21: "FTP", 22: "SSH", 23: "Telnet",
+    25: "SMTP", 53: "DNS", 80: "HTTP", 110: "POP3",
+    111: "RPC", 135: "RPC", 139: "NetBIOS", 143: "IMAP",
+    443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S",
+    1433: "MSSQL", 1521: "Oracle DB", 2049: "NFS",
+    3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL",
+    5900: "VNC", 6379: "Redis", 8080: "HTTP-Proxy",
+    8443: "HTTPS-Alt", 27017: "MongoDB",
+}
+
 print_lock = Lock()
 
 def cve_lookup(service, version):
@@ -79,6 +90,9 @@ def scan_port(ip, port, timeout):
         version = f"{ver_parts[0].decode('utf-8', errors='replace')}.{ver_parts[1].decode('utf-8', errors='replace')}"
     except (IndexError, UnicodeDecodeError, NameError):
         pass
+
+    if service == "unknown":
+        service = SERVICE_PORTS.get(port, "unknown")
 
     with print_lock:
         print(f"  Service: {service} {version}")
