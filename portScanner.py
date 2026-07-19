@@ -155,7 +155,7 @@ def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_EN
 
 def main():
     parser = argparse.ArgumentParser(description="Port Scanner with banner grabbing and CVE lookup")
-    parser.add_argument("target_ip", help="Target IP address")
+    parser.add_argument("target", help="Target IP address or hostname")
     parser.add_argument("--port-start", type=int, default=DEFAULT_PORT_START,
                         help=f"Start port (default: {DEFAULT_PORT_START})")
     parser.add_argument("--port-end", type=int, default=DEFAULT_PORT_END,
@@ -169,12 +169,15 @@ def main():
     args = parser.parse_args()
 
     try:
-        ipaddress.ip_address(args.target_ip)
+        ipaddress.ip_address(args.target)
     except ValueError:
-        print("Invalid IP address format")
-        return
+        try:
+            socket.gethostbyname(args.target)
+        except socket.gaierror:
+            print("Invalid IP address or hostname")
+            return
 
-    port_scan(args.target_ip, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
+    port_scan(args.target, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
 
 if __name__ == "__main__":
     main()

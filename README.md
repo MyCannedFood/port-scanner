@@ -24,14 +24,14 @@ pip install requests
 ## Usage
 
 ```bash
-python portScanner.py <target_ip> [options]
+python portScanner.py <target> [options]
 ```
 
 ### Arguments
 
 | Argument | Default | Description |
 |---|---|---|
-| `target_ip` | — | Target IP address (required) |
+| `target` | — | Target IP address or hostname (required) |
 | `--port-start` | 20 | Starting port |
 | `--port-end` | 3306 | Ending port |
 | `--timeout` | 1 | Socket timeout in seconds |
