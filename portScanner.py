@@ -1,7 +1,15 @@
 import socket
+import ipaddress
+import requests
 from datetime import datetime
 
-target_ip = input("Enter the target IP address: ")
+def cve_lookup(service, version):
+    response = requests.get(f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={service}+{version}")
+
+    for items in response.json()["vulnerabilities"]:
+        print(items)
+
+    print(response.json())
 
 def port_scan(target_ip):
     try:
@@ -26,10 +34,14 @@ def port_scan(target_ip):
                 service = response[0].decode()
                 
                 version = response[1].split(b" ")
-                version = version[0].decode()
+                version = version[0].split(b"p")
+                version = version[0].split(b".")
+                version = f"{version[0].decode()}.{version[1].decode()}"
                 
                 print(f"{service} {version}")
                 print("Port {}: open".format(port))
+
+                cve_lookup(service, version)
 
             sock.close()
 
@@ -39,4 +51,16 @@ def port_scan(target_ip):
     except socket.error:
         print("Could not connect to the server")
 
-port_scan(target_ip)
+def main():
+    target_ip = input("Enter the target IP address: ")
+
+    try:
+        ipaddress.ip_address(target_ip)
+    except ValueError:
+        print("Invalid IP address format")
+        return
+
+    port_scan(target_ip)
+
+if __name__ == "__main__":
+    main()
