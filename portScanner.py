@@ -2,6 +2,10 @@ import socket
 import ipaddress
 import requests
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+
+print_lock = Lock()
 
 def cve_lookup(service, version):
     try:
@@ -37,6 +41,47 @@ def cve_lookup(service, version):
                     break
         print(f"    - {cve_id}: {desc[:120]}")
 
+def scan_port(ip, port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+
+    result = sock.connect_ex((ip, port))
+    if result != 0:
+        sock.close()
+        return
+
+    with print_lock:
+        print("Port {}: open".format(port))
+
+    try:
+        sock.send(b"\r\n")
+        banner = sock.recv(1024)
+    except (socket.timeout, OSError):
+        sock.close()
+        return
+
+    service = "unknown"
+    version = "unknown"
+
+    try:
+        parts = banner.split(b"-")
+        service = parts[2].split(b"_")[0].decode("utf-8", errors="replace")
+        version_raw = parts[2].split(b"_")[1]
+        version_raw = version_raw.split(b" ")[0]
+        version_raw = version_raw.split(b"p")[0]
+        ver_parts = version_raw.split(b".")
+        version = f"{ver_parts[0].decode('utf-8', errors='replace')}.{ver_parts[1].decode('utf-8', errors='replace')}"
+    except (IndexError, UnicodeDecodeError, NameError):
+        pass
+
+    with print_lock:
+        print(f"  Service: {service} {version}")
+
+    if service != "unknown":
+        cve_lookup(service, version)
+
+    sock.close()
+
 def port_scan(target_ip):
     try:
         ip = socket.gethostbyname(target_ip)
@@ -44,41 +89,12 @@ def port_scan(target_ip):
         print("Scanning the target ", ip)
         print("Time started: ", datetime.now())
 
-        for port in range(20, 3306):
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            futures = {executor.submit(scan_port, ip, port): port for port in range(20, 3306)}
+            for future in as_completed(futures):
+                pass
 
-            result = sock.connect_ex((ip, port))
-
-            if result == 0:
-                print("Port {}: open".format(port))
-
-                try:
-                    sock.send(b"\r\n")
-                    banner = sock.recv(1024)
-                except (socket.timeout, OSError):
-                    continue
-
-                service = "unknown"
-                version = "unknown"
-
-                try:
-                    parts = banner.split(b"-")
-                    service = parts[2].split(b"_")[0].decode("utf-8", errors="replace")
-                    version_raw = parts[2].split(b"_")[1]
-                    version_raw = version_raw.split(b" ")[0]
-                    version_raw = version_raw.split(b"p")[0]
-                    ver_parts = version_raw.split(b".")
-                    version = f"{ver_parts[0].decode('utf-8', errors='replace')}.{ver_parts[1].decode('utf-8', errors='replace')}"
-                except (IndexError, UnicodeDecodeError, NameError):
-                    pass
-
-                print(f"  Service: {service} {version}")
-
-                if service != "unknown":
-                    cve_lookup(service, version)
-
-            sock.close()
+        print("Time finished: ", datetime.now())
 
     except socket.gaierror:
         print("Hostname cannot be resolved")
