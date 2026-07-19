@@ -1,9 +1,15 @@
 import socket
 import ipaddress
+import argparse
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
+
+DEFAULT_PORT_START = 20
+DEFAULT_PORT_END = 3306
+DEFAULT_TIMEOUT = 1
+DEFAULT_THREADS = 50
 
 print_lock = Lock()
 
@@ -41,9 +47,9 @@ def cve_lookup(service, version):
                     break
         print(f"    - {cve_id}: {desc[:120]}")
 
-def scan_port(ip, port):
+def scan_port(ip, port, timeout):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(1)
+    sock.settimeout(timeout)
 
     result = sock.connect_ex((ip, port))
     if result != 0:
@@ -82,15 +88,18 @@ def scan_port(ip, port):
 
     sock.close()
 
-def port_scan(target_ip):
+def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
+              timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS):
     try:
         ip = socket.gethostbyname(target_ip)
 
-        print("Scanning the target ", ip)
+        print(f"Scanning {ip} from port {port_start} to {port_end}")
+        print(f"Workers: {threads} | Timeout: {timeout}s")
         print("Time started: ", datetime.now())
 
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = {executor.submit(scan_port, ip, port): port for port in range(20, 3306)}
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = {executor.submit(scan_port, ip, port, timeout): port
+                       for port in range(port_start, port_end + 1)}
             for future in as_completed(futures):
                 pass
 
@@ -103,15 +112,25 @@ def port_scan(target_ip):
         print("Could not connect to the server")
 
 def main():
-    target_ip = input("Enter the target IP address: ")
+    parser = argparse.ArgumentParser(description="Port Scanner with banner grabbing and CVE lookup")
+    parser.add_argument("target_ip", help="Target IP address")
+    parser.add_argument("--port-start", type=int, default=DEFAULT_PORT_START,
+                        help=f"Start port (default: {DEFAULT_PORT_START})")
+    parser.add_argument("--port-end", type=int, default=DEFAULT_PORT_END,
+                        help=f"End port (default: {DEFAULT_PORT_END})")
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
+                        help=f"Socket timeout in seconds (default: {DEFAULT_TIMEOUT})")
+    parser.add_argument("--threads", type=int, default=DEFAULT_THREADS,
+                        help=f"Number of worker threads (default: {DEFAULT_THREADS})")
+    args = parser.parse_args()
 
     try:
-        ipaddress.ip_address(target_ip)
+        ipaddress.ip_address(args.target_ip)
     except ValueError:
         print("Invalid IP address format")
         return
 
-    port_scan(target_ip)
+    port_scan(args.target_ip, args.port_start, args.port_end, args.timeout, args.threads)
 
 if __name__ == "__main__":
     main()
