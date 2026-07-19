@@ -1,6 +1,7 @@
 import socket
 import ipaddress
 import argparse
+import time
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +11,7 @@ DEFAULT_PORT_START = 20
 DEFAULT_PORT_END = 3306
 DEFAULT_TIMEOUT = 1
 DEFAULT_THREADS = 50
+DEFAULT_DELAY = 0
 
 SERVICE_PORTS = {
     20: "FTP-data", 21: "FTP", 22: "SSH", 23: "Telnet",
@@ -58,7 +60,8 @@ def cve_lookup(service, version):
                     break
         print(f"    - {cve_id}: {desc[:120]}")
 
-def scan_port(ip, port, timeout):
+def scan_port(ip, port, timeout, delay):
+    time.sleep(delay)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
 
@@ -103,16 +106,16 @@ def scan_port(ip, port, timeout):
     sock.close()
 
 def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
-              timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS):
+              timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
     try:
         ip = socket.gethostbyname(target_ip)
 
         print(f"Scanning {ip} from port {port_start} to {port_end}")
-        print(f"Workers: {threads} | Timeout: {timeout}s")
+        print(f"Workers: {threads} | Timeout: {timeout}s | Delay: {delay}s")
         print("Time started: ", datetime.now())
 
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(scan_port, ip, port, timeout): port
+            futures = {executor.submit(scan_port, ip, port, timeout, delay): port
                        for port in range(port_start, port_end + 1)}
             for future in as_completed(futures):
                 pass
@@ -136,6 +139,8 @@ def main():
                         help=f"Socket timeout in seconds (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS,
                         help=f"Number of worker threads (default: {DEFAULT_THREADS})")
+    parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
+                        help=f"Delay between scans in seconds (default: {DEFAULT_DELAY})")
     args = parser.parse_args()
 
     try:
@@ -144,7 +149,7 @@ def main():
         print("Invalid IP address format")
         return
 
-    port_scan(args.target_ip, args.port_start, args.port_end, args.timeout, args.threads)
+    port_scan(args.target_ip, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
 
 if __name__ == "__main__":
     main()
