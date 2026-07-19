@@ -25,8 +25,11 @@ SERVICE_PORTS = {
 }
 
 print_lock = Lock()
+scan_count = 0
+open_ports = []
+progress_lock = Lock()
 
-def cve_lookup(service, version):
+def get_cve_text(service, version):
     try:
         response = requests.get(
             f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={service}+{version}",
@@ -34,21 +37,18 @@ def cve_lookup(service, version):
         )
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"  [!] CVE lookup failed: {e}")
-        return
+        return f"         [!] CVE lookup failed: {e}\n"
 
     try:
         data = response.json()
     except ValueError as e:
-        print(f"  [!] Failed to parse CVE response: {e}")
-        return
+        return f"         [!] Failed to parse CVE response: {e}\n"
 
     vulns = data.get("vulnerabilities", [])
     if not vulns:
-        print("  No CVEs found")
-        return
+        return "         No CVEs found\n"
 
-    print(f"  Found {len(vulns)} CVE(s):")
+    lines = [f"         Found {len(vulns)} CVE(s):\n"]
     for item in vulns[:3]:
         cve = item.get("cve", {})
         cve_id = cve.get("id", "N/A")
@@ -58,20 +58,26 @@ def cve_lookup(service, version):
                 if d.get("lang") == "en":
                     desc = d.get("value", "N/A")
                     break
-        print(f"    - {cve_id}: {desc[:120]}")
+        lines.append(f"           - {cve_id}: {desc[:120]}\n")
+    return "".join(lines)
 
 def scan_port(ip, port, timeout, delay):
+    global scan_count
     time.sleep(delay)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
 
     result = sock.connect_ex((ip, port))
+
+    with progress_lock:
+        scan_count += 1
+
     if result != 0:
         sock.close()
         return
 
-    with print_lock:
-        print("Port {}: open".format(port))
+    with progress_lock:
+        open_ports.append(port)
 
     try:
         sock.send(b"\r\n")
@@ -97,22 +103,36 @@ def scan_port(ip, port, timeout, delay):
     if service == "unknown":
         service = SERVICE_PORTS.get(port, "unknown")
 
-    with print_lock:
-        print(f"  Service: {service} {version}")
-
+    cve_output = ""
     if service != "unknown":
-        cve_lookup(service, version)
+        cve_output = get_cve_text(service, version)
+
+    with print_lock:
+        print(f"  OPEN  {port:>5}  {service:<14} {version:<8}")
+        if cve_output:
+            print(cve_output, end="")
 
     sock.close()
 
 def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
               timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
+    global scan_count, open_ports
+    scan_count = 0
+    open_ports = []
+
     try:
         ip = socket.gethostbyname(target_ip)
 
-        print(f"Scanning {ip} from port {port_start} to {port_end}")
-        print(f"Workers: {threads} | Timeout: {timeout}s | Delay: {delay}s")
-        print("Time started: ", datetime.now())
+        total_ports = port_end - port_start + 1
+        start_time = datetime.now()
+        print("=" * 60)
+        print(f"  Port Scanner — Target: {ip}")
+        print(f"  Range: {port_start}-{port_end} ({total_ports} ports)")
+        print(f"  Workers: {threads} | Timeout: {timeout}s | Delay: {delay}s")
+        print(f"  Started: {start_time}")
+        print("=" * 60)
+        print(f"{'PORT':>7}  {'SERVICE':<14} {'VERSION':<8}")
+        print("-" * 60)
 
         with ThreadPoolExecutor(max_workers=threads) as executor:
             futures = {executor.submit(scan_port, ip, port, timeout, delay): port
@@ -120,7 +140,12 @@ def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_EN
             for future in as_completed(futures):
                 pass
 
-        print("Time finished: ", datetime.now())
+        end_time = datetime.now()
+        print("=" * 60)
+        print(f"  Scan complete: {len(open_ports)}/{total_ports} ports open")
+        print(f"  Duration: {end_time - start_time}")
+        print(f"  Finished: {end_time}")
+        print("=" * 60)
 
     except socket.gaierror:
         print("Hostname cannot be resolved")
