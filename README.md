@@ -1,0 +1,83 @@
+# Port Scanner
+
+Multi-threaded TCP port scanner with banner grabbing, service detection, and CVE lookup.
+
+## Features
+
+- **Concurrent scanning** — uses `ThreadPoolExecutor` for fast port scanning
+- **Banner grabbing** — captures service banners from open ports
+- **Service detection** — fallback to well-known port mapping when banner parsing fails
+- **CVE lookup** — queries NVD API for known vulnerabilities
+- **Configurable** — port range, timeout, threads, and delay via CLI arguments
+
+## Requirements
+
+- Python 3.7+
+- `requests` library
+
+Install dependencies:
+
+```bash
+pip install requests
+```
+
+## Usage
+
+```bash
+python portScanner.py <target_ip> [options]
+```
+
+### Arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `target_ip` | — | Target IP address (required) |
+| `--port-start` | 20 | Starting port |
+| `--port-end` | 3306 | Ending port |
+| `--timeout` | 1 | Socket timeout in seconds |
+| `--threads` | 50 | Number of worker threads |
+| `--delay` | 0 | Delay between scans in seconds |
+
+### Examples
+
+```bash
+# Scan default range (20-3306)
+python portScanner.py 192.168.1.1
+
+# Scan common ports only
+python portScanner.py 192.168.1.1 --port-start 1 --port-end 1024
+
+# Fast scan with more threads and lower timeout
+python portScanner.py 10.0.0.1 --timeout 0.5 --threads 100
+
+# Slow scan with delay to avoid detection
+python portScanner.py 192.168.1.1 --delay 0.1 --threads 10
+```
+
+## Output
+
+```
+============================================================
+  Port Scanner — Target: 192.168.1.1
+  Range: 20-3306 (3287 ports)
+  Workers: 50 | Timeout: 1s | Delay: 0s
+  Started: 2026-07-19 12:00:00
+============================================================
+   PORT  SERVICE        VERSION
+------------------------------------------------------------
+  OPEN    22  SSH             unknown
+         No CVEs found
+  OPEN    80  HTTP            unknown
+         No CVEs found
+============================================================
+  Scan complete: 2/3287 ports open
+  Duration: 0:00:12.345
+  Finished: 2026-07-19 12:00:12
+============================================================
+```
+
+## Notes
+
+- Banner grabbing sends `\r\n` and reads up to 1024 bytes
+- CVE lookup is limited to the first 3 results per service
+- Use `--delay` to rate-limit scans and avoid being blocked
