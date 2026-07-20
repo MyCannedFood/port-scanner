@@ -39,7 +39,11 @@ BANNER_PATTERNS = [
 
 class Tee:
     def __init__(self, filepath):
-        self.file = open(filepath, "w")
+        try:
+            self.file = open(filepath, "w")
+        except OSError as e:
+            print(f"Error: cannot open output file '{filepath}': {e}")
+            sys.exit(1)
         self.stdout = sys.stdout
 
     def write(self, text):
@@ -83,7 +87,10 @@ class PortScanner:
                     timeout=10
                 )
                 if response.status_code == 429:
-                    retry_after = int(response.headers.get("Retry-After", 5))
+                    try:
+                        retry_after = int(response.headers.get("Retry-After", 5))
+                    except (ValueError, TypeError):
+                        retry_after = 5
                     await asyncio.sleep(retry_after)
                     continue
                 response.raise_for_status()
@@ -228,6 +235,12 @@ class PortScanner:
         except socket.error:
             print("Could not connect to the server")
 
+        except asyncio.TimeoutError:
+            print("Scan timed out")
+
+        except Exception as e:
+            print(f"Unexpected error during scan: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Port Scanner with banner grabbing and CVE lookup")
@@ -263,6 +276,10 @@ def main():
     try:
         asyncio.run(scanner.scan(args.target, args.port_start, args.port_end,
                                  args.timeout, args.threads, args.delay))
+    except KeyboardInterrupt:
+        print("\nScan cancelled by user")
+    except Exception as e:
+        print(f"Unexpected error: {e}")
     finally:
         if tee:
             sys.stdout = tee.stdout
