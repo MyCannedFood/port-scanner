@@ -67,7 +67,14 @@ class PortScanner:
         self._last_request_time = 0.0
         self._rate_interval = 6.0 if not self.api_key else 0.6
 
+    @staticmethod
+    def _normalize_version(version):
+        ver = re.sub(r"p\d+$", "", version)
+        parts = ver.split(".")
+        return ".".join(parts[:2])
+
     async def _get_cve_text(self, service, version):
+        version = self._normalize_version(version)
         params = {"keywordSearch": f"{service} {version}"}
         if self.api_key:
             params["apiKey"] = self.api_key
