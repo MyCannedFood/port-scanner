@@ -172,6 +172,25 @@ class PortScanner:
              timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
         self.open_ports = []
 
+        if not 1 <= port_start <= 65535:
+            print(f"Error: port_start must be between 1 and 65535, got {port_start}")
+            return
+        if not 1 <= port_end <= 65535:
+            print(f"Error: port_end must be between 1 and 65535, got {port_end}")
+            return
+        if port_start > port_end:
+            print(f"Error: port_start ({port_start}) must not exceed port_end ({port_end})")
+            return
+        if timeout <= 0:
+            print(f"Error: timeout must be positive, got {timeout}")
+            return
+        if threads < 1:
+            print(f"Error: threads must be at least 1, got {threads}")
+            return
+        if delay < 0:
+            print(f"Error: delay must be non-negative, got {delay}")
+            return
+
         try:
             ip = socket.gethostbyname(target_ip)
 
