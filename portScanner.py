@@ -1,6 +1,7 @@
 import socket
 import ipaddress
 import argparse
+import re
 import time
 import requests
 from datetime import datetime
@@ -25,6 +26,15 @@ SERVICE_PORTS = {
     5900: "VNC", 6379: "Redis", 8080: "HTTP-Proxy",
     8443: "HTTPS-Alt", 27017: "MongoDB",
 }
+
+
+BANNER_PATTERNS = [
+    re.compile(rb"SSH-[\d.]+-(\w[\w.-]*?)[_ ](\d[\w.]*)"),
+    re.compile(rb"220[- ](\w[\w.-]*) ([\d.]+)"),
+    re.compile(rb"Server:\s*(\w[\w.-]+)/([\d.]+)", re.IGNORECASE),
+    re.compile(rb"(\w[\w.-]+)/([\d.]+)"),
+    re.compile(rb"(\w[\w.-]+)\s+v?([\d.]+)"),
+]
 
 
 class Tee:
@@ -84,6 +94,16 @@ class PortScanner:
             lines.append(f"           - {cve_id}: {desc[:120]}\n")
         return "".join(lines)
 
+    @staticmethod
+    def _parse_banner(banner):
+        for pattern in BANNER_PATTERNS:
+            match = pattern.search(banner)
+            if match:
+                svc = match.group(1).decode("utf-8", errors="replace")
+                ver = match.group(2).decode("utf-8", errors="replace")
+                return svc, ver
+        return None, None
+
     def _scan_port(self, ip, port, timeout, delay):
         time.sleep(delay)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -105,22 +125,10 @@ class PortScanner:
             sock.close()
             return
 
-        service = "unknown"
-        version = "unknown"
-
-        try:
-            parts = banner.split(b"-")
-            service = parts[2].split(b"_")[0].decode("utf-8", errors="replace")
-            version_raw = parts[2].split(b"_")[1]
-            version_raw = version_raw.split(b" ")[0]
-            version_raw = version_raw.split(b"p")[0]
-            ver_parts = version_raw.split(b".")
-            version = f"{ver_parts[0].decode('utf-8', errors='replace')}.{ver_parts[1].decode('utf-8', errors='replace')}"
-        except (IndexError, UnicodeDecodeError, NameError):
-            pass
-
-        if service == "unknown":
+        service, version = self._parse_banner(banner)
+        if service is None:
             service = self.service_ports.get(port, "unknown")
+            version = "unknown"
 
         cve_output = ""
         if service != "unknown":
