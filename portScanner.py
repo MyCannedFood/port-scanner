@@ -1,15 +1,14 @@
-import socket
+import asyncio
 import ipaddress
 import argparse
 import os
 import re
+import socket
 import time
 import requests
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 from tqdm import tqdm
-from threading import Lock
 
 DEFAULT_PORT_START = 20
 DEFAULT_PORT_END = 3306
@@ -59,39 +58,38 @@ class PortScanner:
     def __init__(self, service_ports=None, api_key=None):
         self.service_ports = service_ports or SERVICE_PORTS
         self.open_ports: list[int] = []
-        self.print_lock = Lock()
-        self.progress_lock = Lock()
         self.api_key = api_key or os.environ.get("NVD_API_KEY")
-        self._rate_lock = Lock()
+        self._rate_lock = asyncio.Lock()
         self._last_request_time = 0.0
         self._rate_interval = 6.0 if not self.api_key else 0.6
 
-    def _get_cve_text(self, service, version):
+    async def _get_cve_text(self, service, version):
         params = {"keywordSearch": f"{service} {version}"}
         if self.api_key:
             params["apiKey"] = self.api_key
 
         for attempt in range(3):
-            with self._rate_lock:
+            async with self._rate_lock:
                 elapsed = time.monotonic() - self._last_request_time
                 if elapsed < self._rate_interval:
-                    time.sleep(self._rate_interval - elapsed)
+                    await asyncio.sleep(self._rate_interval - elapsed)
                 self._last_request_time = time.monotonic()
 
             try:
-                response = requests.get(
+                response = await asyncio.to_thread(
+                    requests.get,
                     "https://services.nvd.nist.gov/rest/json/cves/2.0",
                     params=params,
                     timeout=10
                 )
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 5))
-                    time.sleep(retry_after)
+                    await asyncio.sleep(retry_after)
                     continue
                 response.raise_for_status()
             except requests.exceptions.RequestException as e:
                 if attempt < 2:
-                    time.sleep(2 ** attempt)
+                    await asyncio.sleep(2 ** attempt)
                     continue
                 return f"         [!] CVE lookup failed: {e}\n"
             else:
@@ -131,25 +129,25 @@ class PortScanner:
                 return svc, ver
         return None, None
 
-    def _scan_port(self, ip, port, timeout, delay):
-        time.sleep(delay)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-
-        result = sock.connect_ex((ip, port))
-
-        if result != 0:
-            sock.close()
-            return
-
-        with self.progress_lock:
-            self.open_ports.append(port)
+    async def _scan_port(self, ip, port, timeout, delay):
+        await asyncio.sleep(delay)
 
         try:
-            sock.send(b"\r\n")
-            banner = sock.recv(1024)
-        except (socket.timeout, OSError):
-            sock.close()
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, port), timeout=timeout
+            )
+        except (OSError, asyncio.TimeoutError):
+            return
+
+        self.open_ports.append(port)
+
+        try:
+            writer.write(b"\r\n")
+            await asyncio.wait_for(writer.drain(), timeout=timeout)
+            banner = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+        except (OSError, asyncio.TimeoutError):
+            writer.close()
+            await writer.wait_closed()
             return
 
         service, version = self._parse_banner(banner)
@@ -159,17 +157,17 @@ class PortScanner:
 
         cve_output = ""
         if service != "unknown":
-            cve_output = self._get_cve_text(service, version)
+            cve_output = await self._get_cve_text(service, version)
 
-        with self.print_lock:
-            print(f"  OPEN  {port:>5}  {service:<14} {version:<8}")
-            if cve_output:
-                print(cve_output, end="")
+        print(f"  OPEN  {port:>5}  {service:<14} {version:<8}")
+        if cve_output:
+            print(cve_output, end="")
 
-        sock.close()
+        writer.close()
+        await writer.wait_closed()
 
-    def scan(self, target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
-             timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
+    async def scan(self, target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
+                   timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
         self.open_ports = []
 
         if not 1 <= port_start <= 65535:
@@ -205,12 +203,17 @@ class PortScanner:
             print(f"{'PORT':>7}  {'SERVICE':<14} {'VERSION':<8}")
             print("-" * 60)
 
-            with ThreadPoolExecutor(max_workers=threads) as executor:
-                futures = {executor.submit(self._scan_port, ip, port, timeout, delay): port
-                           for port in range(port_start, port_end + 1)}
-                for _ in tqdm(as_completed(futures), total=total_ports,
-                              desc="Scanning", unit="port", ncols=80):
-                    pass
+            sem = asyncio.Semaphore(threads)
+
+            async def _scan(port):
+                async with sem:
+                    await self._scan_port(ip, port, timeout, delay)
+
+            tasks = [asyncio.create_task(_scan(port))
+                     for port in range(port_start, port_end + 1)]
+            for task in tqdm(asyncio.as_completed(tasks), total=total_ports,
+                             desc="Scanning", unit="port", ncols=80):
+                await task
 
             end_time = datetime.now()
             print("=" * 60)
@@ -236,7 +239,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                         help=f"Socket timeout in seconds (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS,
-                        help=f"Number of worker threads (default: {DEFAULT_THREADS})")
+                        help=f"Number of concurrent tasks (default: {DEFAULT_THREADS})")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
                         help=f"Delay between scans in seconds (default: {DEFAULT_DELAY})")
     parser.add_argument("-o", "--output", help="Save results to file")
@@ -258,7 +261,8 @@ def main():
     scanner = PortScanner()
 
     try:
-        scanner.scan(args.target, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
+        asyncio.run(scanner.scan(args.target, args.port_start, args.port_end,
+                                 args.timeout, args.threads, args.delay))
     finally:
         if tee:
             sys.stdout = tee.stdout
