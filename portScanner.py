@@ -1,6 +1,7 @@
 import socket
 import ipaddress
 import argparse
+import os
 import re
 import time
 import requests
@@ -55,22 +56,48 @@ class Tee:
 
 
 class PortScanner:
-    def __init__(self, service_ports=None):
+    def __init__(self, service_ports=None, api_key=None):
         self.service_ports = service_ports or SERVICE_PORTS
         self.open_ports: list[int] = []
         self.print_lock = Lock()
         self.progress_lock = Lock()
+        self.api_key = api_key or os.environ.get("NVD_API_KEY")
+        self._rate_lock = Lock()
+        self._last_request_time = 0.0
+        self._rate_interval = 6.0 if not self.api_key else 0.6
 
-    @staticmethod
-    def _get_cve_text(service, version):
-        try:
-            response = requests.get(
-                f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={service}+{version}",
-                timeout=10
-            )
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            return f"         [!] CVE lookup failed: {e}\n"
+    def _get_cve_text(self, service, version):
+        params = {"keywordSearch": f"{service} {version}"}
+        if self.api_key:
+            params["apiKey"] = self.api_key
+
+        for attempt in range(3):
+            with self._rate_lock:
+                elapsed = time.monotonic() - self._last_request_time
+                if elapsed < self._rate_interval:
+                    time.sleep(self._rate_interval - elapsed)
+                self._last_request_time = time.monotonic()
+
+            try:
+                response = requests.get(
+                    "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                    params=params,
+                    timeout=10
+                )
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 5))
+                    time.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                return f"         [!] CVE lookup failed: {e}\n"
+            else:
+                break
+        else:
+            return f"         [!] CVE lookup failed after 3 attempts\n"
 
         try:
             data = response.json()
