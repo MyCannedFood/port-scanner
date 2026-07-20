@@ -26,6 +26,7 @@ SERVICE_PORTS = {
     8443: "HTTPS-Alt", 27017: "MongoDB",
 }
 
+
 class Tee:
     def __init__(self, filepath):
         self.file = open(filepath, "w")
@@ -42,129 +43,134 @@ class Tee:
     def close(self):
         self.file.close()
 
-print_lock = Lock()
-open_ports = []
-progress_lock = Lock()
 
-def get_cve_text(service, version):
-    try:
-        response = requests.get(
-            f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={service}+{version}",
-            timeout=10
-        )
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        return f"         [!] CVE lookup failed: {e}\n"
+class PortScanner:
+    def __init__(self, service_ports=None):
+        self.service_ports = service_ports or SERVICE_PORTS
+        self.open_ports: list[int] = []
+        self.print_lock = Lock()
+        self.progress_lock = Lock()
 
-    try:
-        data = response.json()
-    except ValueError as e:
-        return f"         [!] Failed to parse CVE response: {e}\n"
+    @staticmethod
+    def _get_cve_text(service, version):
+        try:
+            response = requests.get(
+                f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={service}+{version}",
+                timeout=10
+            )
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            return f"         [!] CVE lookup failed: {e}\n"
 
-    vulns = data.get("vulnerabilities", [])
-    if not vulns:
-        return "         No CVEs found\n"
+        try:
+            data = response.json()
+        except ValueError as e:
+            return f"         [!] Failed to parse CVE response: {e}\n"
 
-    lines = [f"         Found {len(vulns)} CVE(s):\n"]
-    for item in vulns[:3]:
-        cve = item.get("cve", {})
-        cve_id = cve.get("id", "N/A")
-        desc = "N/A"
-        if "descriptions" in cve:
-            for d in cve["descriptions"]:
-                if d.get("lang") == "en":
-                    desc = d.get("value", "N/A")
-                    break
-        lines.append(f"           - {cve_id}: {desc[:120]}\n")
-    return "".join(lines)
+        vulns = data.get("vulnerabilities", [])
+        if not vulns:
+            return "         No CVEs found\n"
 
-def scan_port(ip, port, timeout, delay):
-    time.sleep(delay)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
+        lines = [f"         Found {len(vulns)} CVE(s):\n"]
+        for item in vulns[:3]:
+            cve = item.get("cve", {})
+            cve_id = cve.get("id", "N/A")
+            desc = "N/A"
+            if "descriptions" in cve:
+                for d in cve["descriptions"]:
+                    if d.get("lang") == "en":
+                        desc = d.get("value", "N/A")
+                        break
+            lines.append(f"           - {cve_id}: {desc[:120]}\n")
+        return "".join(lines)
 
-    result = sock.connect_ex((ip, port))
+    def _scan_port(self, ip, port, timeout, delay):
+        time.sleep(delay)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
 
-    if result != 0:
+        result = sock.connect_ex((ip, port))
+
+        if result != 0:
+            sock.close()
+            return
+
+        with self.progress_lock:
+            self.open_ports.append(port)
+
+        try:
+            sock.send(b"\r\n")
+            banner = sock.recv(1024)
+        except (socket.timeout, OSError):
+            sock.close()
+            return
+
+        service = "unknown"
+        version = "unknown"
+
+        try:
+            parts = banner.split(b"-")
+            service = parts[2].split(b"_")[0].decode("utf-8", errors="replace")
+            version_raw = parts[2].split(b"_")[1]
+            version_raw = version_raw.split(b" ")[0]
+            version_raw = version_raw.split(b"p")[0]
+            ver_parts = version_raw.split(b".")
+            version = f"{ver_parts[0].decode('utf-8', errors='replace')}.{ver_parts[1].decode('utf-8', errors='replace')}"
+        except (IndexError, UnicodeDecodeError, NameError):
+            pass
+
+        if service == "unknown":
+            service = self.service_ports.get(port, "unknown")
+
+        cve_output = ""
+        if service != "unknown":
+            cve_output = self._get_cve_text(service, version)
+
+        with self.print_lock:
+            print(f"  OPEN  {port:>5}  {service:<14} {version:<8}")
+            if cve_output:
+                print(cve_output, end="")
+
         sock.close()
-        return
 
-    with progress_lock:
-        open_ports.append(port)
+    def scan(self, target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
+             timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
+        self.open_ports = []
 
-    try:
-        sock.send(b"\r\n")
-        banner = sock.recv(1024)
-    except (socket.timeout, OSError):
-        sock.close()
-        return
+        try:
+            ip = socket.gethostbyname(target_ip)
 
-    service = "unknown"
-    version = "unknown"
+            total_ports = port_end - port_start + 1
+            start_time = datetime.now()
+            print("=" * 60)
+            print(f"  Port Scanner — Target: {ip}")
+            print(f"  Range: {port_start}-{port_end} ({total_ports} ports)")
+            print(f"  Workers: {threads} | Timeout: {timeout}s | Delay: {delay}s")
+            print(f"  Started: {start_time}")
+            print("=" * 60)
+            print(f"{'PORT':>7}  {'SERVICE':<14} {'VERSION':<8}")
+            print("-" * 60)
 
-    try:
-        parts = banner.split(b"-")
-        service = parts[2].split(b"_")[0].decode("utf-8", errors="replace")
-        version_raw = parts[2].split(b"_")[1]
-        version_raw = version_raw.split(b" ")[0]
-        version_raw = version_raw.split(b"p")[0]
-        ver_parts = version_raw.split(b".")
-        version = f"{ver_parts[0].decode('utf-8', errors='replace')}.{ver_parts[1].decode('utf-8', errors='replace')}"
-    except (IndexError, UnicodeDecodeError, NameError):
-        pass
+            with ThreadPoolExecutor(max_workers=threads) as executor:
+                futures = {executor.submit(self._scan_port, ip, port, timeout, delay): port
+                           for port in range(port_start, port_end + 1)}
+                for _ in tqdm(as_completed(futures), total=total_ports,
+                              desc="Scanning", unit="port", ncols=80):
+                    pass
 
-    if service == "unknown":
-        service = SERVICE_PORTS.get(port, "unknown")
+            end_time = datetime.now()
+            print("=" * 60)
+            print(f"  Scan complete: {len(self.open_ports)}/{total_ports} ports open")
+            print(f"  Duration: {end_time - start_time}")
+            print(f"  Finished: {end_time}")
+            print("=" * 60)
 
-    cve_output = ""
-    if service != "unknown":
-        cve_output = get_cve_text(service, version)
+        except socket.gaierror:
+            print("Hostname cannot be resolved")
 
-    with print_lock:
-        print(f"  OPEN  {port:>5}  {service:<14} {version:<8}")
-        if cve_output:
-            print(cve_output, end="")
+        except socket.error:
+            print("Could not connect to the server")
 
-    sock.close()
-
-def port_scan(target_ip, port_start=DEFAULT_PORT_START, port_end=DEFAULT_PORT_END,
-              timeout=DEFAULT_TIMEOUT, threads=DEFAULT_THREADS, delay=DEFAULT_DELAY):
-    global open_ports
-    open_ports = []
-
-    try:
-        ip = socket.gethostbyname(target_ip)
-
-        total_ports = port_end - port_start + 1
-        start_time = datetime.now()
-        print("=" * 60)
-        print(f"  Port Scanner — Target: {ip}")
-        print(f"  Range: {port_start}-{port_end} ({total_ports} ports)")
-        print(f"  Workers: {threads} | Timeout: {timeout}s | Delay: {delay}s")
-        print(f"  Started: {start_time}")
-        print("=" * 60)
-        print(f"{'PORT':>7}  {'SERVICE':<14} {'VERSION':<8}")
-        print("-" * 60)
-
-        with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(scan_port, ip, port, timeout, delay): port
-                       for port in range(port_start, port_end + 1)}
-            for _ in tqdm(as_completed(futures), total=total_ports,
-                          desc="Scanning", unit="port", ncols=80):
-                pass
-
-        end_time = datetime.now()
-        print("=" * 60)
-        print(f"  Scan complete: {len(open_ports)}/{total_ports} ports open")
-        print(f"  Duration: {end_time - start_time}")
-        print(f"  Finished: {end_time}")
-        print("=" * 60)
-
-    except socket.gaierror:
-        print("Hostname cannot be resolved")
-
-    except socket.error:
-        print("Could not connect to the server")
 
 def main():
     parser = argparse.ArgumentParser(description="Port Scanner with banner grabbing and CVE lookup")
@@ -195,13 +201,16 @@ def main():
     if tee:
         sys.stdout = tee
 
+    scanner = PortScanner()
+
     try:
-        port_scan(args.target, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
+        scanner.scan(args.target, args.port_start, args.port_end, args.timeout, args.threads, args.delay)
     finally:
         if tee:
             sys.stdout = tee.stdout
             tee.close()
             print(f"Results saved to {args.output}")
+
 
 if __name__ == "__main__":
     main()
