@@ -1,13 +1,11 @@
 import asyncio
 import os
-import sys
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import requests
 
-from portScanner import PortScanner, Tee, SERVICE_PORTS
+from portScanner import SERVICE_PORTS, PortScanner
 
 
 @pytest.fixture
@@ -214,6 +212,7 @@ class TestScanPort:
     @patch.object(PortScanner, "_get_cve_text", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_banner_timeout(self, mock_cve, scanner):
+        mock_cve.return_value = ""
         mock_reader = AsyncMock()
         mock_reader.read = AsyncMock(side_effect=asyncio.TimeoutError)
         mock_writer = MagicMock()
@@ -231,6 +230,7 @@ class TestScanPort:
     @patch.object(PortScanner, "_get_cve_text", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_successful_scan(self, mock_cve, scanner):
+        mock_cve.return_value = ""
         mock_reader = AsyncMock()
         mock_reader.read = AsyncMock(return_value=b"SSH-2.0-OpenSSH_8.9p1 ")
         mock_writer = MagicMock()
@@ -249,6 +249,7 @@ class TestScanPort:
     @patch.object(PortScanner, "_get_cve_text", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_port_based_service_fallback(self, mock_cve, scanner):
+        mock_cve.return_value = ""
         mock_reader = AsyncMock()
         mock_reader.read = AsyncMock(return_value=b"\x00\x01\x02")
         mock_writer = MagicMock()
@@ -322,27 +323,6 @@ class TestApiKey:
         with patch.dict(os.environ, {"NVD_API_KEY": "env-key"}):
             s = PortScanner(api_key="explicit-key")
         assert s.api_key == "explicit-key"
-
-
-class TestTee:
-    def test_writes_to_both(self, tmp_path):
-        log = tmp_path / "out.txt"
-        tee = Tee(str(log))
-        tee.write("hello world\n")
-        tee.close()
-
-        assert log.read_text() == "hello world\n"
-
-    def test_file_open_error(self):
-        with pytest.raises(SystemExit):
-            Tee("/nonexistent_dir/out.txt")
-
-    def test_flush(self, tmp_path):
-        log = tmp_path / "out.txt"
-        tee = Tee(str(log))
-        tee.write("data")
-        tee.flush()
-        tee.close()
 
 
 class TestServicePorts:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ipaddress
+import logging
 import os
 import re
 import socket
@@ -13,6 +14,8 @@ from typing import Any
 
 import requests
 from tqdm import tqdm
+
+logger: logging.Logger = logging.getLogger("portScanner")
 
 DEFAULT_PORT_START: int = 20
 DEFAULT_PORT_END: int = 3306
@@ -39,30 +42,6 @@ BANNER_PATTERNS: list[re.Pattern[bytes]] = [
     re.compile(rb"(\w[\w.-]+)/([\d.]+)"),
     re.compile(rb"(\w[\w.-]+)\s+v?([\d.]+)"),
 ]
-
-
-class Tee:
-    file: Any
-    stdout: Any
-
-    def __init__(self, filepath: str) -> None:
-        try:
-            self.file = open(filepath, "w")
-        except OSError as e:
-            print(f"Error: cannot open output file '{filepath}': {e}")
-            sys.exit(1)
-        self.stdout = sys.stdout
-
-    def write(self, text: str) -> None:
-        self.stdout.write(text)
-        self.file.write(text)
-
-    def flush(self) -> None:
-        self.stdout.flush()
-        self.file.flush()
-
-    def close(self) -> None:
-        self.file.close()
 
 
 class PortScanner:
@@ -197,9 +176,9 @@ class PortScanner:
         if service != "unknown" and version is not None:
             cve_output = await self._get_cve_text(service, version)
 
-        print(f"  OPEN  {port:>5}  {service:<14} {version:<8}")
+        logger.info("  OPEN  %5d  %-14s %-8s", port, service, version)
         if cve_output:
-            print(cve_output, end="")
+            logger.info(cve_output.rstrip("\n"))
 
         writer.close()
         await writer.wait_closed()
@@ -212,22 +191,22 @@ class PortScanner:
         self.open_ports = []
 
         if not 1 <= port_start <= 65535:
-            print(f"Error: port_start must be between 1 and 65535, got {port_start}")
+            logger.error("port_start must be between 1 and 65535, got %d", port_start)
             return
         if not 1 <= port_end <= 65535:
-            print(f"Error: port_end must be between 1 and 65535, got {port_end}")
+            logger.error("port_end must be between 1 and 65535, got %d", port_end)
             return
         if port_start > port_end:
-            print(f"Error: port_start ({port_start}) must not exceed port_end ({port_end})")
+            logger.error("port_start (%d) must not exceed port_end (%d)", port_start, port_end)
             return
         if timeout <= 0:
-            print(f"Error: timeout must be positive, got {timeout}")
+            logger.error("timeout must be positive, got %s", timeout)
             return
         if threads < 1:
-            print(f"Error: threads must be at least 1, got {threads}")
+            logger.error("threads must be at least 1, got %d", threads)
             return
         if delay < 0:
-            print(f"Error: delay must be non-negative, got {delay}")
+            logger.error("delay must be non-negative, got %s", delay)
             return
 
         try:
@@ -235,14 +214,14 @@ class PortScanner:
 
             total_ports: int = port_end - port_start + 1
             start_time: datetime = datetime.now()
-            print("=" * 60)
-            print(f"  Port Scanner — Target: {ip}")
-            print(f"  Range: {port_start}-{port_end} ({total_ports} ports)")
-            print(f"  Workers: {threads} | Timeout: {timeout}s | Delay: {delay}s")
-            print(f"  Started: {start_time}")
-            print("=" * 60)
-            print(f"{'PORT':>7}  {'SERVICE':<14} {'VERSION':<8}")
-            print("-" * 60)
+            logger.info("=" * 60)
+            logger.info("  Port Scanner — Target: %s", ip)
+            logger.info("  Range: %d-%d (%d ports)", port_start, port_end, total_ports)
+            logger.info("  Workers: %d | Timeout: %ss | Delay: %ss", threads, timeout, delay)
+            logger.info("  Started: %s", start_time)
+            logger.info("=" * 60)
+            logger.info("%7s  %-14s %-8s", "PORT", "SERVICE", "VERSION")
+            logger.info("-" * 60)
 
             sem: asyncio.Semaphore = asyncio.Semaphore(threads)
 
@@ -257,23 +236,41 @@ class PortScanner:
                 await task
 
             end_time: datetime = datetime.now()
-            print("=" * 60)
-            print(f"  Scan complete: {len(self.open_ports)}/{total_ports} ports open")
-            print(f"  Duration: {end_time - start_time}")
-            print(f"  Finished: {end_time}")
-            print("=" * 60)
+            logger.info("=" * 60)
+            logger.info("  Scan complete: %d/%d ports open", len(self.open_ports), total_ports)
+            logger.info("  Duration: %s", end_time - start_time)
+            logger.info("  Finished: %s", end_time)
+            logger.info("=" * 60)
 
         except socket.gaierror:
-            print("Hostname cannot be resolved")
+            logger.error("Hostname cannot be resolved")
 
         except socket.error:
-            print("Could not connect to the server")
+            logger.error("Could not connect to the server")
 
         except asyncio.TimeoutError:
-            print("Scan timed out")
+            logger.error("Scan timed out")
 
         except Exception as e:
-            print(f"Unexpected error during scan: {e}")
+            logger.error("Unexpected error during scan: %s", e)
+
+
+def _setup_logging(output_file: str | None = None) -> None:
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(message)s")
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    if output_file:
+        try:
+            file_handler = logging.FileHandler(output_file, mode="w")
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except OSError as e:
+            logger.error("Cannot open output file '%s': %s", output_file, e)
+            sys.exit(1)
 
 
 def main() -> None:
@@ -298,12 +295,10 @@ def main() -> None:
         try:
             socket.gethostbyname(args.target)
         except socket.gaierror:
-            print("Invalid IP address or hostname")
+            logger.error("Invalid IP address or hostname")
             return
 
-    tee: Tee | None = Tee(args.output) if args.output else None
-    if tee:
-        sys.stdout = tee
+    _setup_logging(args.output)
 
     scanner: PortScanner = PortScanner()
 
@@ -311,14 +306,9 @@ def main() -> None:
         asyncio.run(scanner.scan(args.target, args.port_start, args.port_end,
                                  args.timeout, args.threads, args.delay))
     except KeyboardInterrupt:
-        print("\nScan cancelled by user")
+        logger.warning("Scan cancelled by user")
     except Exception as e:
-        print(f"Unexpected error: {e}")
-    finally:
-        if tee:
-            sys.stdout = tee.stdout
-            tee.close()
-            print(f"Results saved to {args.output}")
+        logger.error("Unexpected error: %s", e)
 
 
 if __name__ == "__main__":
