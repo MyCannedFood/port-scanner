@@ -335,3 +335,27 @@ class TestServicePorts:
 
     def test_unknown_port_not_present(self):
         assert 9999 not in SERVICE_PORTS
+
+
+class TestIntegration:
+    @patch.object(PortScanner, "_get_cve_text", return_value="")
+    @pytest.mark.asyncio
+    async def test_scan_local_server(self, mock_cve):
+        server_banner = b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3\r\n"
+
+        async def handle_client(reader, writer):
+            await reader.read(1024)
+            writer.write(server_banner)
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+        addr = server.sockets[0].getsockname()
+
+        async with server:
+            scanner = PortScanner(api_key="test-key")
+            await scanner.scan("127.0.0.1", port_start=addr[1], port_end=addr[1], timeout=2, threads=1, delay=0)
+
+        assert addr[1] in scanner.open_ports
+        mock_cve.assert_awaited_once_with("OpenSSH", "8.9p1")
