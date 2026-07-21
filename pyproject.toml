@@ -7,7 +7,7 @@ name = "port-scanner"
 version = "0.1.0"
 description = "Multi-threaded TCP port scanner with banner grabbing and CVE lookup"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = {text = "MIT"}
 keywords = ["port-scanner", "security", "network", "cve"]
 
@@ -18,7 +18,6 @@ authors = [
 classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -45,7 +44,7 @@ dev = [
 port-scanner = "portScanner:main"
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py39"
 line-length = 120
 lint.select = ["E", "F", "W", "I", "N"]
 lint.ignore = ["N818"]
