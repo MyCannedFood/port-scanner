@@ -25,6 +25,6 @@ jobs:
       - name: Run tests
         run: pytest -v
       - name: Lint
-        run: ruff check portScanner.py
+        run: ruff check portScanner.py test_portScanner.py
       - name: Type check
         run: mypy portScanner.py
