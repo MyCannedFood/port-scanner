@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import ipaddress
-import argparse
 import os
 import re
 import socket
@@ -123,7 +123,7 @@ class PortScanner:
             else:
                 break
         else:
-            return f"         [!] CVE lookup failed after 3 attempts\n"
+            return "         [!] CVE lookup failed after 3 attempts\n"
 
         try:
             data: Any = response.json()
@@ -194,8 +194,11 @@ class PortScanner:
         writer.close()
         await writer.wait_closed()
 
-    async def scan(self, target_ip: str, port_start: int = DEFAULT_PORT_START, port_end: int = DEFAULT_PORT_END,
-                   timeout: float = DEFAULT_TIMEOUT, threads: int = DEFAULT_THREADS, delay: float = DEFAULT_DELAY) -> None:
+    async def scan(
+        self, target_ip: str, port_start: int = DEFAULT_PORT_START,
+        port_end: int = DEFAULT_PORT_END, timeout: float = DEFAULT_TIMEOUT,
+        threads: int = DEFAULT_THREADS, delay: float = DEFAULT_DELAY,
+    ) -> None:
         self.open_ports = []
 
         if not 1 <= port_start <= 65535:

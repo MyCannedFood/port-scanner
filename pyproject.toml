@@ -38,10 +38,17 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "mypy>=1.0",
+    "ruff>=0.5",
 ]
 
 [project.scripts]
 port-scanner = "portScanner:main"
+
+[tool.ruff]
+target-version = "py38"
+line-length = 120
+lint.select = ["E", "F", "W", "I", "N"]
+lint.ignore = ["N818"]
 
 [tool.mypy]
 python_version = "3.10"

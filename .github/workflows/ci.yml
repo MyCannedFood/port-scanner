@@ -24,5 +24,7 @@ jobs:
           pip install .[dev]
       - name: Run tests
         run: pytest -v
+      - name: Lint
+        run: ruff check portScanner.py
       - name: Type check
         run: mypy portScanner.py

@@ -184,7 +184,7 @@ class PortScanner:
             version = "unknown"
 
         cve_output: str = ""
-        if service != "unknown":
+        if service != "unknown" and version is not None:
             cve_output = await self._get_cve_text(service, version)
 
         print(f"  OPEN  {port:>5}  {service:<14} {version:<8}")
