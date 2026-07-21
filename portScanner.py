@@ -115,10 +115,20 @@ class PortScanner:
                     await asyncio.sleep(retry_after)
                     continue
                 response.raise_for_status()
-            except requests.exceptions.RequestException as e:
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if 400 <= status < 500 and status != 429:
+                    return f"         [!] CVE lookup failed (client error {status}): {e}\n"
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)
                     continue
+                return f"         [!] CVE lookup failed: {e}\n"
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return f"         [!] CVE lookup failed: {e}\n"
+            except requests.exceptions.RequestException as e:
                 return f"         [!] CVE lookup failed: {e}\n"
             else:
                 break
