@@ -2,6 +2,8 @@
 
 Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
 
+> **⚠️ Legal Notice:** Port scanning without explicit permission from the target owner is illegal in many jurisdictions. This tool is intended for authorized security assessments, penetration testing, and educational purposes only. You are responsible for complying with all applicable laws.
+
 ## Features
 
 - **Async concurrent scanning** — uses `asyncio` for efficient I/O-bound port scanning
