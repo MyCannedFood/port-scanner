@@ -263,8 +263,8 @@ class PortScanner:
         except asyncio.TimeoutError:
             logger.error("Scan timed out")
 
-        except Exception as e:
-            logger.error("Unexpected error during scan: %s", e)
+        except Exception:
+            logger.exception("Unexpected error during scan")
 
 
 def _setup_logging(output_file: str | None = None) -> None:
@@ -322,8 +322,8 @@ def main() -> None:
                                  args.scan_timeout))
     except KeyboardInterrupt:
         logger.warning("Scan cancelled by user")
-    except Exception as e:
-        logger.error("Unexpected error: %s", e)
+    except Exception:
+        logger.exception("Unexpected error")
 
 
 if __name__ == "__main__":
