@@ -2,3 +2,7 @@
 .envrc
 __pycache__/
 *.pyc
+.pytest_cache/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
