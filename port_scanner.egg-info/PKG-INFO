@@ -19,33 +19,52 @@ Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 Requires-Dist: requests>=2.28
 Requires-Dist: tqdm>=4.64
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
 
 # Port Scanner
 
-Multi-threaded TCP port scanner with banner grabbing, service detection, and CVE lookup.
+Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
 
 ## Features
 
-- **Concurrent scanning** — uses `ThreadPoolExecutor` for fast port scanning
-- **Banner grabbing** — captures service banners from open ports
+- **Async concurrent scanning** — uses `asyncio` for efficient I/O-bound port scanning
+- **Banner grabbing** — captures service banners from open ports with regex-based parsing
 - **Service detection** — fallback to well-known port mapping when banner parsing fails
-- **CVE lookup** — queries NVD API for known vulnerabilities
-- **Configurable** — port range, timeout, threads, delay, and output file via CLI arguments
+- **CVE lookup** — queries NVD API for known vulnerabilities with rate limiting and retry
+- **Configurable** — port range, timeout, concurrency, delay, and output file via CLI
 - **Progress bar** — real-time scan progress with `tqdm`
 - **Save output** — export results to a file with `-o`
+- **Rate limiting** — respects NVD API limits (6s interval without key, 0.6s with key)
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.8+
 - `requests`, `tqdm` libraries
 
-Install dependencies:
+Install:
 
 ```bash
-pip install requests tqdm
+pip install port-scanner
+```
+
+Or for development:
+
+```bash
+git clone <repo>
+cd portScanner
+pip install -e ".[dev]"
 ```
 
 ## Usage
+
+```bash
+port-scanner <target> [options]
+```
+
+Or directly:
 
 ```bash
 python portScanner.py <target> [options]
@@ -59,53 +78,73 @@ python portScanner.py <target> [options]
 | `--port-start` | 20 | Starting port |
 | `--port-end` | 3306 | Ending port |
 | `--timeout` | 1 | Socket timeout in seconds |
-| `--threads` | 50 | Number of worker threads |
+| `--threads` | 50 | Number of concurrent tasks |
 | `--delay` | 0 | Delay between scans in seconds |
 | `-o, --output` | — | Save results to file |
+
+### CVE Lookup
+
+Set the `NVD_API_KEY` environment variable for higher rate limits (50 req/30s instead of 5 req/30s):
+
+```bash
+export NVD_API_KEY=your-key-here
+port-scanner scanme.nmap.org
+```
 
 ### Examples
 
 ```bash
 # Scan default range (20-3306)
-python portScanner.py 192.168.1.1
+port-scanner 192.168.1.1
 
 # Scan common ports only
-python portScanner.py 192.168.1.1 --port-start 1 --port-end 1024
+port-scanner 192.168.1.1 --port-start 1 --port-end 1024
 
-# Fast scan with more threads and lower timeout
-python portScanner.py 10.0.0.1 --timeout 0.5 --threads 100
+# Fast scan with higher concurrency and lower timeout
+port-scanner 10.0.0.1 --timeout 0.5 --threads 100
 
 # Slow scan with delay to avoid detection
-python portScanner.py 192.168.1.1 --delay 0.1 --threads 10
+port-scanner 192.168.1.1 --delay 0.1 --threads 10
 
 # Save results to file
-python portScanner.py scanme.nmap.org -o results.txt
+port-scanner scanme.nmap.org -o results.txt
 ```
 
 ## Output
 
 ```
 ============================================================
-  Port Scanner — Target: 192.168.1.1
+  Port Scanner — Target: 45.33.32.156
   Range: 20-3306 (3287 ports)
   Workers: 50 | Timeout: 1s | Delay: 0s
-  Started: 2026-07-19 12:00:00
+  Started: 2026-07-20 12:49:09
 ============================================================
    PORT  SERVICE        VERSION
 ------------------------------------------------------------
-  OPEN    22  SSH             unknown
-         No CVEs found
+  OPEN    22  OpenSSH        6.6.1p1
+         Found 2 CVE(s):
+           - CVE-2014-2532: sshd in OpenSSH before 6.6 ...
+           - CVE-2014-2653: The verify_host_key function ...
   OPEN    80  HTTP            unknown
          No CVEs found
 ============================================================
   Scan complete: 2/3287 ports open
-  Duration: 0:00:12.345
-  Finished: 2026-07-19 12:00:12
+  Duration: 0:00:14.687
+  Finished: 2026-07-20 12:55:08
 ============================================================
+```
+
+## Development
+
+Run tests:
+
+```bash
+pytest
 ```
 
 ## Notes
 
 - Banner grabbing sends `\r\n` and reads up to 1024 bytes
-- CVE lookup is limited to the first 3 results per service
+- CVE lookup is limited to the first 3 results per service and normalizes versions for broader matching
 - Use `--delay` to rate-limit scans and avoid being blocked
+- NVD API rate limits apply: 5 req/30s without key, 50 req/30s with key

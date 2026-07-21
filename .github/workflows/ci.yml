@@ -24,3 +24,5 @@ jobs:
           pip install .[dev]
       - name: Run tests
         run: pytest -v
+      - name: Type check
+        run: mypy portScanner.py
