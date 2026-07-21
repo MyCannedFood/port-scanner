@@ -22,6 +22,7 @@ DEFAULT_PORT_END: int = 3306
 DEFAULT_TIMEOUT: float = 1.0
 DEFAULT_THREADS: int = 50
 DEFAULT_DELAY: float = 0.0
+DEFAULT_SCAN_TIMEOUT: float = 0.0
 
 SERVICE_PORTS: dict[int, str] = {
     20: "FTP-data", 21: "FTP", 22: "SSH", 23: "Telnet",
@@ -187,6 +188,7 @@ class PortScanner:
         self, target_ip: str, port_start: int = DEFAULT_PORT_START,
         port_end: int = DEFAULT_PORT_END, timeout: float = DEFAULT_TIMEOUT,
         threads: int = DEFAULT_THREADS, delay: float = DEFAULT_DELAY,
+        scan_timeout: float = DEFAULT_SCAN_TIMEOUT,
     ) -> None:
         self.open_ports = []
 
@@ -207,6 +209,9 @@ class PortScanner:
             return
         if delay < 0:
             logger.error("delay must be non-negative, got %s", delay)
+            return
+        if scan_timeout < 0:
+            logger.error("scan_timeout must be non-negative, got %s", scan_timeout)
             return
 
         try:
@@ -231,9 +236,16 @@ class PortScanner:
 
             tasks: list[asyncio.Task[None]] = [asyncio.create_task(_scan(port))
                                                 for port in range(port_start, port_end + 1)]
-            for task in tqdm(asyncio.as_completed(tasks), total=total_ports,
-                             desc="Scanning", unit="port", ncols=80):
-                await task
+
+            async def _run() -> None:
+                for task in tqdm(asyncio.as_completed(tasks), total=total_ports,
+                                 desc="Scanning", unit="port", ncols=80):
+                    await task
+
+            if scan_timeout > 0:
+                await asyncio.wait_for(_run(), timeout=scan_timeout)
+            else:
+                await _run()
 
             end_time: datetime = datetime.now()
             logger.info("=" * 60)
@@ -287,6 +299,8 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
                         help=f"Delay between scans in seconds (default: {DEFAULT_DELAY})")
     parser.add_argument("-o", "--output", help="Save results to file")
+    parser.add_argument("--scan-timeout", type=float, default=DEFAULT_SCAN_TIMEOUT,
+                        help=f"Total scan timeout in seconds, 0 = no limit (default: {DEFAULT_SCAN_TIMEOUT})")
     args: argparse.Namespace = parser.parse_args()
 
     try:
@@ -304,7 +318,8 @@ def main() -> None:
 
     try:
         asyncio.run(scanner.scan(args.target, args.port_start, args.port_end,
-                                 args.timeout, args.threads, args.delay))
+                                 args.timeout, args.threads, args.delay,
+                                 args.scan_timeout))
     except KeyboardInterrupt:
         logger.warning("Scan cancelled by user")
     except Exception as e:
