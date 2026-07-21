@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -335,6 +336,82 @@ class TestServicePorts:
 
     def test_unknown_port_not_present(self):
         assert 9999 not in SERVICE_PORTS
+
+
+class TestNormalizeVersion:
+    def test_strips_patch_letter(self):
+        assert PortScanner._normalize_version("8.9p1") == "8.9"
+
+    def test_strips_patch_with_dash(self):
+        assert PortScanner._normalize_version("6.6.1p1") == "6.6"
+
+    def test_keeps_major_minor(self):
+        assert PortScanner._normalize_version("1.2.3") == "1.2"
+
+    def test_already_short(self):
+        assert PortScanner._normalize_version("1.0") == "1.0"
+
+    def test_long_version(self):
+        assert PortScanner._normalize_version("10.20.30.40") == "10.20"
+
+    def test_empty_string(self):
+        assert PortScanner._normalize_version("") == ""
+
+
+class TestMain:
+    def test_valid_target(self):
+        with patch("portScanner.socket.gethostbyname", return_value="127.0.0.1"):
+            with patch("portScanner._setup_logging"):
+                with patch("portScanner.asyncio.run"):
+                    from portScanner import main
+                    with patch("sys.argv", ["portScanner", "127.0.0.1"]):
+                        main()
+
+    def test_invalid_hostname_logs_error(self):
+        with patch("portScanner.socket.gethostbyname", side_effect=socket.gaierror):
+            with patch("portScanner.logger.error") as mock_log:
+                from portScanner import main
+                with patch("sys.argv", ["portScanner", "invalid-host"]):
+                    main()
+                mock_log.assert_called_once_with("Invalid IP address or hostname")
+
+    def test_keyboard_interrupt_caught(self):
+        with patch("portScanner.socket.gethostbyname", return_value="127.0.0.1"):
+            with patch("portScanner._setup_logging"):
+                with patch("portScanner.asyncio.run", side_effect=KeyboardInterrupt):
+                    with patch("portScanner.logger.warning") as mock_log:
+                        from portScanner import main
+                        with patch("sys.argv", ["portScanner", "127.0.0.1"]):
+                            main()
+                        mock_log.assert_called_once_with("Scan cancelled by user")
+
+
+class TestFileOutput:
+    @pytest.mark.asyncio
+    async def test_file_handler_logs_scan_results(self, tmp_path, scanner):
+        output_file = tmp_path / "results.txt"
+        from portScanner import _setup_logging, logger
+        original_handlers = list(logger.handlers)
+        try:
+            _setup_logging(str(output_file))
+
+            mock_reader = AsyncMock()
+            mock_reader.read = AsyncMock(return_value=b"SSH-2.0-OpenSSH_8.9p1 ")
+            mock_writer = MagicMock()
+            mock_writer.drain = AsyncMock()
+            mock_writer.wait_closed = AsyncMock()
+
+            with patch.object(PortScanner, "_get_cve_text", return_value=""):
+                with patch("portScanner.asyncio.open_connection") as mock_conn:
+                    mock_conn.return_value = (mock_reader, mock_writer)
+                    await scanner._scan_port("127.0.0.1", 22, 1, 0)
+
+            content = output_file.read_text()
+            assert "OPEN" in content
+            assert "22" in content
+            assert "OpenSSH" in content
+        finally:
+            logger.handlers = original_handlers
 
 
 class TestIntegration:

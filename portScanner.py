@@ -73,10 +73,12 @@ class PortScanner:
         if self.api_key:
             params["apiKey"] = self.api_key
 
+        logger.debug("Looking up CVEs for %s %s", service, version)
         for attempt in range(3):
             async with self._rate_lock:
                 elapsed = time.monotonic() - self._last_request_time
                 if elapsed < self._rate_interval:
+                    logger.debug("Rate limit: sleeping %.1fs", self._rate_interval - elapsed)
                     await asyncio.sleep(self._rate_interval - elapsed)
                 self._last_request_time = time.monotonic()
 
@@ -150,12 +152,16 @@ class PortScanner:
     async def _scan_port(self, ip: str, port: int, timeout: float, delay: float) -> None:
         await asyncio.sleep(delay)
 
+        logger.debug("Connecting to %s:%d", ip, port)
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(ip, port), timeout=timeout
             )
         except (OSError, asyncio.TimeoutError):
+            logger.debug("Port %d: connection refused or timed out", port)
             return
+
+        logger.debug("Port %d: connected", port)
 
         self.open_ports.append(port)
 
@@ -164,10 +170,12 @@ class PortScanner:
             await asyncio.wait_for(writer.drain(), timeout=timeout)
             banner: bytes = await asyncio.wait_for(reader.read(1024), timeout=timeout)
         except (OSError, asyncio.TimeoutError):
+            logger.debug("Port %d: banner grab timed out", port)
             writer.close()
             await writer.wait_closed()
             return
 
+        logger.debug("Port %d: raw banner %r", port, banner)
         service, version = self._parse_banner(banner)
         if service is None:
             service = self.service_ports.get(port, "unknown")
@@ -216,6 +224,7 @@ class PortScanner:
 
         try:
             ip: str = socket.gethostbyname(target_ip)
+            logger.debug("Resolved %s to %s", target_ip, ip)
 
             total_ports: int = port_end - port_start + 1
             start_time: datetime = datetime.now()
@@ -242,7 +251,9 @@ class PortScanner:
                                  desc="Scanning", unit="port", ncols=80):
                     await task
 
+            logger.debug("Created %d scan tasks with %d workers", total_ports, threads)
             if scan_timeout > 0:
+                logger.debug("Scan timeout enabled: %ss", scan_timeout)
                 await asyncio.wait_for(_run(), timeout=scan_timeout)
             else:
                 await _run()
@@ -267,8 +278,8 @@ class PortScanner:
             logger.exception("Unexpected error during scan")
 
 
-def _setup_logging(output_file: str | None = None) -> None:
-    logger.setLevel(logging.INFO)
+def _setup_logging(output_file: str | None = None, verbose: bool = False) -> None:
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     formatter = logging.Formatter("%(message)s")
 
     stream_handler = logging.StreamHandler(sys.stdout)
@@ -301,6 +312,8 @@ def main() -> None:
     parser.add_argument("-o", "--output", help="Save results to file")
     parser.add_argument("--scan-timeout", type=float, default=DEFAULT_SCAN_TIMEOUT,
                         help=f"Total scan timeout in seconds, 0 = no limit (default: {DEFAULT_SCAN_TIMEOUT})")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Enable debug-level logging for troubleshooting")
     args: argparse.Namespace = parser.parse_args()
 
     try:
@@ -312,7 +325,7 @@ def main() -> None:
             logger.error("Invalid IP address or hostname")
             return
 
-    _setup_logging(args.output)
+    _setup_logging(args.output, args.verbose)
 
     scanner: PortScanner = PortScanner()
 
