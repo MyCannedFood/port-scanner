@@ -15,6 +15,7 @@ Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
 - **Save output** — export results to a file with `-o`
 - **Overall scan timeout** — prevent hangs with `--scan-timeout`
 - **Rate limiting** — respects NVD API limits (6s interval without key, 0.6s with key)
+- **Verbose mode** — `--verbose` for debug-level logging to aid troubleshooting
 
 ## Requirements
 
@@ -59,6 +60,7 @@ python portScanner.py <target> [options]
 | `--delay` | 0 | Delay between scans in seconds |
 | `-o, --output` | — | Save results to file |
 | `--scan-timeout` | 0 | Total scan timeout in seconds (0 = no limit) |
+| `--verbose, -v` | — | Enable debug-level logging for troubleshooting |
 
 ### CVE Lookup
 
@@ -86,6 +88,9 @@ port-scanner 192.168.1.1 --delay 0.1 --threads 10
 
 # Save results to file
 port-scanner scanme.nmap.org -o results.txt
+
+# Verbose mode for troubleshooting
+port-scanner 192.168.1.1 --verbose
 ```
 
 ## Output
