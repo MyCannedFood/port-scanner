@@ -5,7 +5,6 @@ Summary: Multi-threaded TCP port scanner with banner grabbing and CVE lookup
 Author-email: Gara <gara@example.com>
 License: MIT
 Keywords: port-scanner,security,network,cve
-Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Developers
 Classifier: Programming Language :: Python :: 3
 Classifier: Programming Language :: Python :: 3.8
@@ -17,17 +16,20 @@ Classifier: Programming Language :: Python :: 3.13
 Classifier: Programming Language :: Python :: 3.14
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
-Requires-Dist: requests>=2.28
-Requires-Dist: tqdm>=4.64
+Requires-Dist: requests<3,>=2.28
+Requires-Dist: tqdm<5,>=4.64
 Provides-Extra: dev
-Requires-Dist: pytest>=8; extra == "dev"
-Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
-Requires-Dist: mypy>=1.0; extra == "dev"
-Requires-Dist: ruff>=0.5; extra == "dev"
+Requires-Dist: pytest<9,>=8; extra == "dev"
+Requires-Dist: pytest-asyncio<1,>=0.24; extra == "dev"
+Requires-Dist: mypy<2,>=1.0; extra == "dev"
+Requires-Dist: ruff<1,>=0.5; extra == "dev"
+Requires-Dist: types-requests>=2.28; extra == "dev"
 
 # Port Scanner
 
 Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
+
+> **⚠️ Legal Notice:** Port scanning without explicit permission from the target owner is illegal in many jurisdictions. This tool is intended for authorized security assessments, penetration testing, and educational purposes only. You are responsible for complying with all applicable laws.
 
 ## Features
 
@@ -35,9 +37,10 @@ Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
 - **Banner grabbing** — captures service banners from open ports with regex-based parsing
 - **Service detection** — fallback to well-known port mapping when banner parsing fails
 - **CVE lookup** — queries NVD API for known vulnerabilities with rate limiting and retry
-- **Configurable** — port range, timeout, concurrency, delay, and output file via CLI
+- **Configurable** — port range, timeout, concurrency, delay, scan timeout, and output file via CLI
 - **Progress bar** — real-time scan progress with `tqdm`
 - **Save output** — export results to a file with `-o`
+- **Overall scan timeout** — prevent hangs with `--scan-timeout`
 - **Rate limiting** — respects NVD API limits (6s interval without key, 0.6s with key)
 
 ## Requirements
@@ -82,6 +85,7 @@ python portScanner.py <target> [options]
 | `--threads` | 50 | Number of concurrent tasks |
 | `--delay` | 0 | Delay between scans in seconds |
 | `-o, --output` | — | Save results to file |
+| `--scan-timeout` | 0 | Total scan timeout in seconds (0 = no limit) |
 
 ### CVE Lookup
 
@@ -137,10 +141,12 @@ port-scanner scanme.nmap.org -o results.txt
 
 ## Development
 
-Run tests:
+Run tests, type checking, and linting:
 
 ```bash
-pytest
+pytest -v
+mypy portScanner.py
+ruff check portScanner.py test_portScanner.py
 ```
 
 ## Notes
@@ -149,3 +155,4 @@ pytest
 - CVE lookup is limited to the first 3 results per service and normalizes versions for broader matching
 - Use `--delay` to rate-limit scans and avoid being blocked
 - NVD API rate limits apply: 5 req/30s without key, 50 req/30s with key
+- IPv6 addresses are accepted but resolved via `socket.gethostbyname()` which returns an IPv4 address; IPv6-only hosts are not supported
