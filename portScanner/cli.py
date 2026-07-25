@@ -20,6 +20,7 @@ from portScanner.scanner import (
     DEFAULT_TIMEOUT,
     PortScanner,
     logger,
+    parse_port_spec,
 )
 
 
@@ -54,6 +55,8 @@ def main() -> None:
                         help=f"Number of concurrent tasks (default: {DEFAULT_THREADS})")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
                         help=f"Delay between scans in seconds (default: {DEFAULT_DELAY})")
+    parser.add_argument("-p", "--ports",
+                        help="Ports to scan (e.g. '22,80,443', '1-1000', 'common', 'all')")
     parser.add_argument("-o", "--output", help="Save results to file")
     parser.add_argument("--scan-timeout", type=float, default=DEFAULT_SCAN_TIMEOUT,
                         help=f"Total scan timeout in seconds, 0 = no limit (default: {DEFAULT_SCAN_TIMEOUT})")
@@ -62,6 +65,14 @@ def main() -> None:
     parser.add_argument("--format", "-f", choices=["text", "json", "csv"], default="text",
                         help="Output format (default: text)")
     args: argparse.Namespace = parser.parse_args()
+
+    port_list: list[int] | None = None
+    if args.ports:
+        try:
+            port_list = parse_port_spec(args.ports)
+        except ValueError as e:
+            logger.error("Invalid port specification: %s", e)
+            sys.exit(1)
 
     _setup_logging(args.output if args.format == "text" else None, args.verbose)
 
@@ -78,9 +89,12 @@ def main() -> None:
     scan_start: float = time.monotonic()
 
     try:
-        asyncio.run(scanner.scan(args.target, args.port_start, args.port_end,
-                                 args.timeout, args.threads, args.delay,
-                                 args.scan_timeout))
+        asyncio.run(scanner.scan(
+            args.target, ports=port_list,
+            port_start=args.port_start, port_end=args.port_end,
+            timeout=args.timeout, threads=args.threads, delay=args.delay,
+            scan_timeout=args.scan_timeout,
+        ))
     except (KeyboardInterrupt, asyncio.CancelledError):
         logger.warning("Scan cancelled by user")
     except Exception:
@@ -89,17 +103,19 @@ def main() -> None:
     scan_duration: float = time.monotonic() - scan_start
 
     if args.format != "text":
-        _write_structured_output(scanner, args, scan_duration)
+        _write_structured_output(scanner, args, scan_duration, port_list)
 
 
 def _write_structured_output(
-    scanner: PortScanner, args: argparse.Namespace, duration: float
+    scanner: PortScanner, args: argparse.Namespace, duration: float,
+    port_list: list[int] | None,
 ) -> None:
     data: dict[str, object] = {
         "target": args.target,
         "port_start": args.port_start,
         "port_end": args.port_end,
-        "total_ports": args.port_end - args.port_start + 1,
+        "ports": port_list if port_list else list(range(args.port_start, args.port_end + 1)),
+        "total_ports": len(port_list) if port_list else args.port_end - args.port_start + 1,
         "duration_seconds": round(duration, 2),
         "open_ports_count": len(scanner.open_ports),
         "results": scanner.results,

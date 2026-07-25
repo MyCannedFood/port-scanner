@@ -21,6 +21,12 @@ DEFAULT_THREADS: int = 50
 DEFAULT_DELAY: float = 0.0
 DEFAULT_SCAN_TIMEOUT: float = 0.0
 
+PORTS_COMMON: list[int] = [
+    21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143,
+    443, 445, 993, 995, 1433, 1521, 2049, 3306, 3389,
+    5432, 5900, 6379, 8080, 8443, 27017,
+]
+
 SERVICE_PORTS: dict[int, str] = {
     20: "FTP-data", 21: "FTP", 22: "SSH", 23: "Telnet",
     25: "SMTP", 53: "DNS", 80: "HTTP", 110: "POP3",
@@ -39,6 +45,36 @@ BANNER_PATTERNS: list[re.Pattern[bytes]] = [
     re.compile(rb"(\w[\w.-]+)/([\d.]+)"),
     re.compile(rb"(\w[\w.-]+)\s+v?([\d.]+)"),
 ]
+
+
+def parse_port_spec(spec: str) -> list[int]:
+    normalized = spec.strip().lower()
+    if normalized == "common":
+        return list(PORTS_COMMON)
+    if normalized == "all":
+        return list(range(1, 65536))
+    ports: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_str, end_str = part.split("-", 1)
+            start = int(start_str.strip())
+            end = int(end_str.strip())
+            if not (1 <= start <= 65535 and 1 <= end <= 65535):
+                raise ValueError(f"Port range values must be 1-65535, got {part}")
+            if start > end:
+                raise ValueError(f"Port range start > end: {part}")
+            ports.update(range(start, end + 1))
+        else:
+            port = int(part)
+            if not 1 <= port <= 65535:
+                raise ValueError(f"Port must be 1-65535, got {port}")
+            ports.add(port)
+    if not ports:
+        raise ValueError("No valid ports specified")
+    return sorted(ports)
 
 
 class PortScanner:
@@ -200,7 +236,8 @@ class PortScanner:
             await writer.wait_closed()
 
     async def scan(
-        self, target_ip: str, port_start: int = DEFAULT_PORT_START,
+        self, target_ip: str, ports: list[int] | None = None,
+        port_start: int = DEFAULT_PORT_START,
         port_end: int = DEFAULT_PORT_END, timeout: float = DEFAULT_TIMEOUT,
         threads: int = DEFAULT_THREADS, delay: float = DEFAULT_DELAY,
         scan_timeout: float = DEFAULT_SCAN_TIMEOUT,
@@ -208,15 +245,22 @@ class PortScanner:
         self.open_ports = []
         self.results = []
 
-        if not 1 <= port_start <= 65535:
-            logger.error("port_start must be between 1 and 65535, got %d", port_start)
-            return
-        if not 1 <= port_end <= 65535:
-            logger.error("port_end must be between 1 and 65535, got %d", port_end)
-            return
-        if port_start > port_end:
-            logger.error("port_start (%d) must not exceed port_end (%d)", port_start, port_end)
-            return
+        if ports is not None:
+            for p in ports:
+                if not 1 <= p <= 65535:
+                    logger.error("port must be between 1 and 65535, got %d", p)
+                    return
+        else:
+            if not 1 <= port_start <= 65535:
+                logger.error("port_start must be between 1 and 65535, got %d", port_start)
+                return
+            if not 1 <= port_end <= 65535:
+                logger.error("port_end must be between 1 and 65535, got %d", port_end)
+                return
+            if port_start > port_end:
+                logger.error("port_start (%d) must not exceed port_end (%d)", port_start, port_end)
+                return
+
         if timeout <= 0:
             logger.error("timeout must be positive, got %s", timeout)
             return
@@ -234,11 +278,15 @@ class PortScanner:
             ip: str = socket.gethostbyname(target_ip)
             logger.debug("Resolved %s to %s", target_ip, ip)
 
-            total_ports: int = port_end - port_start + 1
+            port_list: list[int] = ports if ports is not None else list(range(port_start, port_end + 1))
+            total_ports: int = len(port_list)
             start_time: datetime = datetime.now()
             logger.info("=" * 60)
             logger.info("  Port Scanner — Target: %s", ip)
-            logger.info("  Range: %d-%d (%d ports)", port_start, port_end, total_ports)
+            if ports is not None:
+                logger.info("  Ports: %s (%d ports)", ",".join(str(p) for p in ports), total_ports)
+            else:
+                logger.info("  Range: %d-%d (%d ports)", port_start, port_end, total_ports)
             logger.info("  Workers: %d | Timeout: %ss | Delay: %ss", threads, timeout, delay)
             logger.info("  Started: %s", start_time)
             logger.info("=" * 60)
@@ -252,7 +300,7 @@ class PortScanner:
                     await self._scan_port(ip, port, timeout, delay)
 
             tasks: list[asyncio.Task[None]] = [asyncio.create_task(_scan(port))
-                                                for port in range(port_start, port_end + 1)]
+                                                for port in port_list]
 
             async def _run() -> None:
                 try:

@@ -5,5 +5,7 @@ from portScanner.scanner import DEFAULT_PORT_START as DEFAULT_PORT_START
 from portScanner.scanner import DEFAULT_SCAN_TIMEOUT as DEFAULT_SCAN_TIMEOUT
 from portScanner.scanner import DEFAULT_THREADS as DEFAULT_THREADS
 from portScanner.scanner import DEFAULT_TIMEOUT as DEFAULT_TIMEOUT
+from portScanner.scanner import PORTS_COMMON as PORTS_COMMON
 from portScanner.scanner import SERVICE_PORTS as SERVICE_PORTS
 from portScanner.scanner import PortScanner as PortScanner
+from portScanner.scanner import parse_port_spec as parse_port_spec
