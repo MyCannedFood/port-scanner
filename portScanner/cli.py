@@ -62,7 +62,7 @@ def _validate_target(target: str) -> None:
         ipaddress.ip_address(target)
     except ValueError:
         try:
-            socket.gethostbyname(target)
+            socket.getaddrinfo(target, 0, type=socket.SOCK_STREAM)
         except socket.gaierror:
             logger.error("Invalid IP address or hostname: %s", target)
             sys.exit(1)
@@ -89,6 +89,8 @@ def main() -> None:
     parser.add_argument("-o", "--output", help="Save results to file")
     parser.add_argument("--scan-timeout", type=float, default=DEFAULT_SCAN_TIMEOUT,
                         help=f"Total scan timeout in seconds, 0 = no limit (default: {DEFAULT_SCAN_TIMEOUT})")
+    parser.add_argument("-6", "--ipv6", action="store_true",
+                        help="Force IPv6 resolution")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging for troubleshooting")
     parser.add_argument("--format", "-f", choices=["text", "json", "csv"], default="text",
@@ -146,6 +148,7 @@ def main() -> None:
                 port_start=args.port_start, port_end=args.port_end,
                 timeout=args.timeout, threads=args.threads, delay=args.delay,
                 scan_timeout=args.scan_timeout,
+                family=socket.AF_INET6 if args.ipv6 else 0,
             ))
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.warning("Scan cancelled by user")

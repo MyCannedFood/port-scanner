@@ -112,6 +112,25 @@ def parse_port_spec(spec: str) -> list[int]:
     return sorted(ports)
 
 
+def resolve_target(target: str, family: int = 0) -> tuple[str, int]:
+    try:
+        ipaddress.ip_address(target)
+        addr = target
+        fam: int = socket.AF_INET6 if ":" in target else socket.AF_INET
+        return addr, fam
+    except ValueError:
+        pass
+
+    families: list[int] = [socket.AF_INET6, socket.AF_INET] if family == 0 else [family]
+    for fam in families:
+        try:
+            addrinfo = socket.getaddrinfo(target, 0, family=fam, type=socket.SOCK_STREAM)
+            return str(addrinfo[0][4][0]), int(addrinfo[0][0])
+        except socket.gaierror:
+            continue
+    raise socket.gaierror(f"Could not resolve {target}")
+
+
 class PortScanner:
     service_ports: dict[int, str]
     open_ports: list[int]
@@ -219,7 +238,8 @@ class PortScanner:
     @staticmethod
     def _get_probe(port: int, ip: str) -> bytes:
         if port in {80, 8000, 8080, 8888}:
-            return f"GET / HTTP/1.0\r\nHost: {ip}\r\n\r\n".encode()
+            host: str = f"[{ip}]" if ":" in ip else ip
+            return f"GET / HTTP/1.0\r\nHost: {host}\r\n\r\n".encode()
         return b"\r\n"
 
     @staticmethod
@@ -227,7 +247,8 @@ class PortScanner:
         return port in GREETING_PORTS
 
     async def _grab_banner(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
-                            ip: str, port: int, timeout: float) -> tuple[str | None, str | None]:
+                            ip: str, port: int, timeout: float,
+                            family: int = 0) -> tuple[str | None, str | None]:
         banner: bytes = b""
         if self._is_greeting_port(port):
             try:
@@ -255,7 +276,7 @@ class PortScanner:
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
                 tls_reader, tls_writer = await asyncio.wait_for(
-                    asyncio.open_connection(ip, port, ssl=ctx), timeout=timeout
+                    asyncio.open_connection(ip, port, ssl=ctx, family=family), timeout=timeout
                 )
                 try:
                     banner = await asyncio.wait_for(tls_reader.read(4096), timeout=timeout)
@@ -278,14 +299,15 @@ class PortScanner:
 
         return None, None
 
-    async def _scan_port(self, target_ip: str, ip: str, port: int, timeout: float, delay: float) -> None:
+    async def _scan_port(self, target_ip: str, ip: str, port: int, timeout: float, delay: float,
+                          family: int = 0) -> None:
         await asyncio.sleep(delay)
 
         logger.debug("Connecting to %s:%d", ip, port)
         writer = None
         try:
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(ip, port), timeout=timeout
+                asyncio.open_connection(ip, port, family=family), timeout=timeout
             )
         except (OSError, asyncio.TimeoutError):
             logger.debug("Port %d: connection refused or timed out", port)
@@ -301,7 +323,7 @@ class PortScanner:
         cve_output: str = ""
 
         try:
-            svc, ver = await self._grab_banner(reader, writer, ip, port, timeout)
+            svc, ver = await self._grab_banner(reader, writer, ip, port, timeout, family)
             if svc is not None:
                 service = svc
                 version = ver if ver is not None else "unknown"
@@ -334,6 +356,7 @@ class PortScanner:
         port_end: int = DEFAULT_PORT_END, timeout: float = DEFAULT_TIMEOUT,
         threads: int = DEFAULT_THREADS, delay: float = DEFAULT_DELAY,
         scan_timeout: float = DEFAULT_SCAN_TIMEOUT,
+        family: int = 0,
     ) -> None:
         self.open_ports = []
         self.results = []
@@ -368,8 +391,11 @@ class PortScanner:
             return
 
         try:
-            ip: str = socket.gethostbyname(target_ip)
-            logger.debug("Resolved %s to %s", target_ip, ip)
+            ip: str
+            resolved_family: int
+            ip, resolved_family = resolve_target(target_ip, family)
+            logger.debug("Resolved %s to %s (family=%s)", target_ip, ip,
+                         "IPv6" if resolved_family == socket.AF_INET6 else "IPv4")
 
             port_list: list[int] = ports if ports is not None else list(range(port_start, port_end + 1))
             total_ports: int = len(port_list)
@@ -390,7 +416,8 @@ class PortScanner:
 
             async def _scan(port: int) -> None:
                 async with sem:
-                    await self._scan_port(target_ip, ip, port, timeout, delay)
+                    await self._scan_port(target_ip, ip, port, timeout, delay,
+                                          resolved_family)
 
             tasks: list[asyncio.Task[None]] = [asyncio.create_task(_scan(port))
                                                 for port in port_list]
@@ -421,11 +448,7 @@ class PortScanner:
             logger.info("=" * 60)
 
         except socket.gaierror:
-            try:
-                socket.getaddrinfo(target_ip, None, socket.AF_INET6)
-                logger.error("Hostname resolves to IPv6 only, which is not supported")
-            except socket.gaierror:
-                logger.error("Hostname cannot be resolved")
+            logger.error("Hostname cannot be resolved: %s", target_ip)
 
         except socket.error:
             logger.error("Could not connect to the server")
