@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 import re
@@ -45,6 +46,26 @@ BANNER_PATTERNS: list[re.Pattern[bytes]] = [
     re.compile(rb"(\w[\w.-]+)/([\d.]+)"),
     re.compile(rb"(\w[\w.-]+)\s+v?([\d.]+)"),
 ]
+
+
+def expand_targets(specs: list[str]) -> list[str]:
+    targets: list[str] = []
+    for spec in specs:
+        if "/" in spec:
+            try:
+                network = ipaddress.ip_network(spec, strict=False)
+                targets.extend(str(ip) for ip in network.hosts())
+            except ValueError:
+                targets.append(spec)
+        else:
+            targets.append(spec)
+    seen: set[str] = set()
+    result: list[str] = []
+    for t in targets:
+        if t not in seen:
+            seen.add(t)
+            result.append(t)
+    return result
 
 
 def parse_port_spec(spec: str) -> list[int]:
@@ -181,7 +202,7 @@ class PortScanner:
                 return svc, ver
         return None, None
 
-    async def _scan_port(self, ip: str, port: int, timeout: float, delay: float) -> None:
+    async def _scan_port(self, target_ip: str, ip: str, port: int, timeout: float, delay: float) -> None:
         await asyncio.sleep(delay)
 
         logger.debug("Connecting to %s:%d", ip, port)
@@ -227,6 +248,7 @@ class PortScanner:
         finally:
             async with self._ports_lock:
                 self.results.append({
+                    "target": target_ip,
                     "port": port,
                     "service": service,
                     "version": version,
@@ -297,7 +319,7 @@ class PortScanner:
 
             async def _scan(port: int) -> None:
                 async with sem:
-                    await self._scan_port(ip, port, timeout, delay)
+                    await self._scan_port(target_ip, ip, port, timeout, delay)
 
             tasks: list[asyncio.Task[None]] = [asyncio.create_task(_scan(port))
                                                 for port in port_list]

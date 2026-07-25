@@ -19,6 +19,7 @@ from portScanner.scanner import (
     DEFAULT_THREADS,
     DEFAULT_TIMEOUT,
     PortScanner,
+    expand_targets,
     logger,
     parse_port_spec,
 )
@@ -42,9 +43,34 @@ def _setup_logging(output_file: str | None = None, verbose: bool = False) -> Non
             sys.exit(1)
 
 
+def _read_targets_from_file(path: str) -> list[str]:
+    try:
+        with open(path) as f:
+            lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        if not lines:
+            logger.error("No targets found in '%s'", path)
+            sys.exit(1)
+        return lines
+    except OSError as e:
+        logger.error("Cannot read input file '%s': %s", path, e)
+        sys.exit(1)
+
+
+def _validate_target(target: str) -> None:
+    try:
+        ipaddress.ip_address(target)
+    except ValueError:
+        try:
+            socket.gethostbyname(target)
+        except socket.gaierror:
+            logger.error("Invalid IP address or hostname: %s", target)
+            sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Port Scanner with banner grabbing and CVE lookup")
-    parser.add_argument("target", help="Target IP address or hostname")
+    parser.add_argument("target", nargs="?", help="Target IP address or hostname (or CIDR)")
+    parser.add_argument("-iL", "--input-list", help="File containing target hosts/networks (one per line)")
     parser.add_argument("--port-start", type=int, default=DEFAULT_PORT_START,
                         help=f"Start port (default: {DEFAULT_PORT_START})")
     parser.add_argument("--port-end", type=int, default=DEFAULT_PORT_END,
@@ -66,6 +92,10 @@ def main() -> None:
                         help="Output format (default: text)")
     args: argparse.Namespace = parser.parse_args()
 
+    if not args.target and not args.input_list:
+        logger.error("A target or --input-list is required")
+        sys.exit(1)
+
     port_list: list[int] | None = None
     if args.ports:
         try:
@@ -74,60 +104,72 @@ def main() -> None:
             logger.error("Invalid port specification: %s", e)
             sys.exit(1)
 
+    raw_targets: list[str] = []
+    if args.target:
+        raw_targets.append(args.target)
+    if args.input_list:
+        raw_targets.extend(_read_targets_from_file(args.input_list))
+
+    targets: list[str] = expand_targets(raw_targets)
+    for t in targets:
+        _validate_target(t)
+
     _setup_logging(args.output if args.format == "text" else None, args.verbose)
 
-    try:
-        ipaddress.ip_address(args.target)
-    except ValueError:
-        try:
-            socket.gethostbyname(args.target)
-        except socket.gaierror:
-            logger.error("Invalid IP address or hostname")
-            sys.exit(1)
-
-    scanner: PortScanner = PortScanner()
+    all_results: list[dict[str, str | int]] = []
+    total_open: int = 0
     scan_start: float = time.monotonic()
 
-    try:
-        asyncio.run(scanner.scan(
-            args.target, ports=port_list,
-            port_start=args.port_start, port_end=args.port_end,
-            timeout=args.timeout, threads=args.threads, delay=args.delay,
-            scan_timeout=args.scan_timeout,
-        ))
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        logger.warning("Scan cancelled by user")
-    except Exception:
-        logger.exception("Unexpected error")
+    for i, target in enumerate(targets):
+        logger.info("%sScanning target %d/%d: %s",
+                     "\n" if i > 0 else "", i + 1, len(targets), target)
+        scanner = PortScanner()
+
+        try:
+            asyncio.run(scanner.scan(
+                target, ports=port_list,
+                port_start=args.port_start, port_end=args.port_end,
+                timeout=args.timeout, threads=args.threads, delay=args.delay,
+                scan_timeout=args.scan_timeout,
+            ))
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.warning("Scan cancelled by user")
+            break
+        except Exception:
+            logger.exception("Unexpected error scanning %s", target)
+            continue
+
+        all_results.extend(scanner.results)
+        total_open += len(scanner.open_ports)
 
     scan_duration: float = time.monotonic() - scan_start
 
     if args.format != "text":
-        _write_structured_output(scanner, args, scan_duration, port_list)
+        _write_structured_output(all_results, args, scan_duration, port_list, targets)
 
 
 def _write_structured_output(
-    scanner: PortScanner, args: argparse.Namespace, duration: float,
-    port_list: list[int] | None,
+    results: list[dict[str, str | int]], args: argparse.Namespace, duration: float,
+    port_list: list[int] | None, targets: list[str],
 ) -> None:
     data: dict[str, object] = {
-        "target": args.target,
+        "targets": targets,
         "port_start": args.port_start,
         "port_end": args.port_end,
         "ports": port_list if port_list else list(range(args.port_start, args.port_end + 1)),
         "total_ports": len(port_list) if port_list else args.port_end - args.port_start + 1,
         "duration_seconds": round(duration, 2),
-        "open_ports_count": len(scanner.open_ports),
-        "results": scanner.results,
+        "open_ports_count": len(results),
+        "results": results,
     }
 
     if args.format == "json":
         output: str = json.dumps(data, indent=2, default=str)
     else:
         buf = StringIO()
-        writer = csv.DictWriter(buf, fieldnames=["port", "service", "version", "cve"])
+        writer = csv.DictWriter(buf, fieldnames=["target", "port", "service", "version", "cve"])
         writer.writeheader()
-        writer.writerows(scanner.results)
+        writer.writerows(results)
         output = buf.getvalue()
 
     if args.output:

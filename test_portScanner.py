@@ -215,7 +215,7 @@ class TestScanPort:
         with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.side_effect = ConnectionRefusedError
 
-            await scanner._scan_port("127.0.0.1", 22, 1, 0)
+            await scanner._scan_port("127.0.0.1", "127.0.0.1", 22, 1, 0)
 
         assert 22 not in scanner.open_ports
         mock_cve.assert_not_called()
@@ -226,7 +226,7 @@ class TestScanPort:
         with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.side_effect = asyncio.TimeoutError
 
-            await scanner._scan_port("127.0.0.1", 22, 1, 0)
+            await scanner._scan_port("127.0.0.1", "127.0.0.1", 22, 1, 0)
 
         assert 22 not in scanner.open_ports
         mock_cve.assert_not_called()
@@ -244,7 +244,7 @@ class TestScanPort:
         with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.return_value = (mock_reader, mock_writer)
 
-            await scanner._scan_port("127.0.0.1", 22, 1, 0)
+            await scanner._scan_port("127.0.0.1", "127.0.0.1", 22, 1, 0)
 
         assert 22 in scanner.open_ports
         mock_writer.close.assert_called_once()
@@ -262,7 +262,7 @@ class TestScanPort:
         with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.return_value = (mock_reader, mock_writer)
 
-            await scanner._scan_port("127.0.0.1", 22, 1, 0)
+            await scanner._scan_port("127.0.0.1", "127.0.0.1", 22, 1, 0)
 
         assert 22 in scanner.open_ports
         mock_cve.assert_awaited_once_with("OpenSSH", "8.9p1")
@@ -281,7 +281,7 @@ class TestScanPort:
         with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.return_value = (mock_reader, mock_writer)
 
-            await scanner._scan_port("127.0.0.1", 80, 1, 0)
+            await scanner._scan_port("127.0.0.1", "127.0.0.1", 80, 1, 0)
 
         assert 80 in scanner.open_ports
         mock_cve.assert_awaited_once_with("HTTP", "unknown")
@@ -395,7 +395,7 @@ class TestMain:
                 with patch("sys.argv", ["portScanner", "invalid-host"]):
                     with pytest.raises(SystemExit):
                         main()
-                mock_log.assert_called_once_with("Invalid IP address or hostname")
+                mock_log.assert_called_once_with("Invalid IP address or hostname: %s", "invalid-host")
 
     def test_keyboard_interrupt_caught(self):
         with patch("portScanner.cli.socket.gethostbyname", return_value="127.0.0.1"):
@@ -427,7 +427,7 @@ class TestFileOutput:
             with patch.object(PortScanner, "_get_cve_text", return_value=""):
                 with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
                     mock_conn.return_value = (mock_reader, mock_writer)
-                    await scanner._scan_port("127.0.0.1", 22, 1, 0)
+                    await scanner._scan_port("127.0.0.1", "127.0.0.1", 22, 1, 0)
 
             content = output_file.read_text()
             assert "OPEN" in content
