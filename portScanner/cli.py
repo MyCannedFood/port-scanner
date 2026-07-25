@@ -74,7 +74,7 @@ def main() -> None:
         asyncio.run(scanner.scan(args.target, args.port_start, args.port_end,
                                  args.timeout, args.threads, args.delay,
                                  args.scan_timeout))
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         logger.warning("Scan cancelled by user")
     except Exception:
         logger.exception("Unexpected error")

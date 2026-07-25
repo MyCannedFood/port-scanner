@@ -147,6 +147,7 @@ class PortScanner:
         await asyncio.sleep(delay)
 
         logger.debug("Connecting to %s:%d", ip, port)
+        writer = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(ip, port), timeout=timeout
@@ -164,28 +165,25 @@ class PortScanner:
             writer.write(b"\r\n")
             await asyncio.wait_for(writer.drain(), timeout=timeout)
             banner: bytes = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+
+            logger.debug("Port %d: raw banner %r", port, banner)
+            service, version = self._parse_banner(banner)
+            if service is None:
+                service = self.service_ports.get(port, "unknown")
+                version = "unknown"
+
+            cve_output: str = ""
+            if service != "unknown" and version is not None:
+                cve_output = await self._get_cve_text(service, version)
+
+            logger.info("  OPEN  %5d  %-14s %-8s", port, service, version)
+            if cve_output:
+                logger.info(cve_output.rstrip("\n"))
         except (OSError, asyncio.TimeoutError):
             logger.debug("Port %d: banner grab timed out", port)
+        finally:
             writer.close()
             await writer.wait_closed()
-            return
-
-        logger.debug("Port %d: raw banner %r", port, banner)
-        service, version = self._parse_banner(banner)
-        if service is None:
-            service = self.service_ports.get(port, "unknown")
-            version = "unknown"
-
-        cve_output: str = ""
-        if service != "unknown" and version is not None:
-            cve_output = await self._get_cve_text(service, version)
-
-        logger.info("  OPEN  %5d  %-14s %-8s", port, service, version)
-        if cve_output:
-            logger.info(cve_output.rstrip("\n"))
-
-        writer.close()
-        await writer.wait_closed()
 
     async def scan(
         self, target_ip: str, port_start: int = DEFAULT_PORT_START,
@@ -242,9 +240,15 @@ class PortScanner:
                                                 for port in range(port_start, port_end + 1)]
 
             async def _run() -> None:
-                for task in tqdm(asyncio.as_completed(tasks), total=total_ports,
-                                 desc="Scanning", unit="port", ncols=80):
-                    await task
+                try:
+                    for coro in tqdm(asyncio.as_completed(tasks), total=total_ports,
+                                     desc="Scanning", unit="port", ncols=80):
+                        await coro
+                except asyncio.CancelledError:
+                    for t in tasks:
+                        t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    raise
 
             logger.debug("Created %d scan tasks with %d workers", total_ports, threads)
             if scan_timeout > 0:
@@ -272,6 +276,15 @@ class PortScanner:
 
         except asyncio.TimeoutError:
             logger.error("Scan timed out")
+
+        except asyncio.CancelledError:
+            end_time: datetime = datetime.now()
+            logger.warning("=" * 60)
+            logger.warning("  Scan cancelled by user")
+            logger.warning("  Partial results: %d/%d ports open", len(self.open_ports), total_ports)
+            logger.warning("  Duration: %s", end_time - start_time)
+            logger.warning("=" * 60)
+            raise
 
         except Exception:
             logger.exception("Unexpected error during scan")
