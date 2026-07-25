@@ -261,7 +261,11 @@ class PortScanner:
             logger.info("=" * 60)
 
         except socket.gaierror:
-            logger.error("Hostname cannot be resolved")
+            try:
+                socket.getaddrinfo(target_ip, None, socket.AF_INET6)
+                logger.error("Hostname resolves to IPv6 only, which is not supported")
+            except socket.gaierror:
+                logger.error("Hostname cannot be resolved")
 
         except socket.error:
             logger.error("Could not connect to the server")
