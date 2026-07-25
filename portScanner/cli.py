@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import ipaddress
+import json
 import logging
 import socket
 import sys
+import time
+from io import StringIO
 
 from portScanner.scanner import (
     DEFAULT_DELAY,
@@ -55,9 +59,11 @@ def main() -> None:
                         help=f"Total scan timeout in seconds, 0 = no limit (default: {DEFAULT_SCAN_TIMEOUT})")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging for troubleshooting")
+    parser.add_argument("--format", "-f", choices=["text", "json", "csv"], default="text",
+                        help="Output format (default: text)")
     args: argparse.Namespace = parser.parse_args()
 
-    _setup_logging(args.output, args.verbose)
+    _setup_logging(args.output if args.format == "text" else None, args.verbose)
 
     try:
         ipaddress.ip_address(args.target)
@@ -69,6 +75,7 @@ def main() -> None:
             sys.exit(1)
 
     scanner: PortScanner = PortScanner()
+    scan_start: float = time.monotonic()
 
     try:
         asyncio.run(scanner.scan(args.target, args.port_start, args.port_end,
@@ -78,3 +85,40 @@ def main() -> None:
         logger.warning("Scan cancelled by user")
     except Exception:
         logger.exception("Unexpected error")
+
+    scan_duration: float = time.monotonic() - scan_start
+
+    if args.format != "text":
+        _write_structured_output(scanner, args, scan_duration)
+
+
+def _write_structured_output(
+    scanner: PortScanner, args: argparse.Namespace, duration: float
+) -> None:
+    data: dict[str, object] = {
+        "target": args.target,
+        "port_start": args.port_start,
+        "port_end": args.port_end,
+        "total_ports": args.port_end - args.port_start + 1,
+        "duration_seconds": round(duration, 2),
+        "open_ports_count": len(scanner.open_ports),
+        "results": scanner.results,
+    }
+
+    if args.format == "json":
+        output: str = json.dumps(data, indent=2, default=str)
+    else:
+        buf = StringIO()
+        writer = csv.DictWriter(buf, fieldnames=["port", "service", "version", "cve"])
+        writer.writeheader()
+        writer.writerows(scanner.results)
+        output = buf.getvalue()
+
+    if args.output:
+        try:
+            with open(args.output, "w") as f:
+                f.write(output)
+        except OSError as e:
+            logger.error("Cannot write output file '%s': %s", args.output, e)
+    else:
+        print(output)

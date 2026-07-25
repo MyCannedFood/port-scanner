@@ -44,6 +44,7 @@ BANNER_PATTERNS: list[re.Pattern[bytes]] = [
 class PortScanner:
     service_ports: dict[int, str]
     open_ports: list[int]
+    results: list[dict[str, str | int]]
     api_key: str | None
     _rate_lock: asyncio.Lock
     _ports_lock: asyncio.Lock
@@ -53,6 +54,7 @@ class PortScanner:
     def __init__(self, service_ports: dict[int, str] | None = None, api_key: str | None = None) -> None:
         self.service_ports = service_ports or SERVICE_PORTS
         self.open_ports = []
+        self.results = []
         self.api_key = api_key or os.environ.get("NVD_API_KEY")
         self._rate_lock = asyncio.Lock()
         self._ports_lock = asyncio.Lock()
@@ -161,18 +163,23 @@ class PortScanner:
         async with self._ports_lock:
             self.open_ports.append(port)
 
+        service = "unknown"
+        version = "unknown"
+        cve_output: str = ""
+
         try:
             writer.write(b"\r\n")
             await asyncio.wait_for(writer.drain(), timeout=timeout)
             banner: bytes = await asyncio.wait_for(reader.read(1024), timeout=timeout)
 
             logger.debug("Port %d: raw banner %r", port, banner)
-            service, version = self._parse_banner(banner)
-            if service is None:
+            svc, ver = self._parse_banner(banner)
+            if svc is not None:
+                service = svc
+                version = ver if ver is not None else "unknown"
+            else:
                 service = self.service_ports.get(port, "unknown")
-                version = "unknown"
 
-            cve_output: str = ""
             if service != "unknown" and version is not None:
                 cve_output = await self._get_cve_text(service, version)
 
@@ -182,6 +189,13 @@ class PortScanner:
         except (OSError, asyncio.TimeoutError):
             logger.debug("Port %d: banner grab timed out", port)
         finally:
+            async with self._ports_lock:
+                self.results.append({
+                    "port": port,
+                    "service": service,
+                    "version": version,
+                    "cve": cve_output,
+                })
             writer.close()
             await writer.wait_closed()
 
@@ -192,6 +206,7 @@ class PortScanner:
         scan_timeout: float = DEFAULT_SCAN_TIMEOUT,
     ) -> None:
         self.open_ports = []
+        self.results = []
 
         if not 1 <= port_start <= 65535:
             logger.error("port_start must be between 1 and 65535, got %d", port_start)
@@ -278,7 +293,7 @@ class PortScanner:
             logger.error("Scan timed out")
 
         except asyncio.CancelledError:
-            end_time: datetime = datetime.now()
+            end_time = datetime.now()
             logger.warning("=" * 60)
             logger.warning("  Scan cancelled by user")
             logger.warning("  Partial results: %d/%d ports open", len(self.open_ports), total_ports)
