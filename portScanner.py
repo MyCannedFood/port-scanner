@@ -50,6 +50,7 @@ class PortScanner:
     open_ports: list[int]
     api_key: str | None
     _rate_lock: asyncio.Lock
+    _ports_lock: asyncio.Lock
     _last_request_time: float
     _rate_interval: float
 
@@ -58,6 +59,7 @@ class PortScanner:
         self.open_ports = []
         self.api_key = api_key or os.environ.get("NVD_API_KEY")
         self._rate_lock = asyncio.Lock()
+        self._ports_lock = asyncio.Lock()
         self._last_request_time = 0.0
         self._rate_interval = 6.0 if not self.api_key else 0.6
 
@@ -163,7 +165,8 @@ class PortScanner:
 
         logger.debug("Port %d: connected", port)
 
-        self.open_ports.append(port)
+        async with self._ports_lock:
+            self.open_ports.append(port)
 
         try:
             writer.write(b"\r\n")
