@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from portScanner import SERVICE_PORTS, PortScanner
+from portScanner.scanner import SERVICE_PORTS, PortScanner
 
 
 @pytest.fixture
@@ -90,7 +90,7 @@ class MockAiohttpResponse:
 
 
 class TestGetCveText:
-    @patch("portScanner.aiohttp.ClientSession.get")
+    @patch("portScanner.scanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_success_with_cves(self, mock_get, scanner):
         mock_response = MockAiohttpResponse(
@@ -125,7 +125,7 @@ class TestGetCveText:
         assert "Found 2 CVE(s)" in result
         mock_get.assert_called_once()
 
-    @patch("portScanner.aiohttp.ClientSession.get")
+    @patch("portScanner.scanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_success_no_cves(self, mock_get, scanner):
         mock_response = MockAiohttpResponse(
@@ -138,7 +138,7 @@ class TestGetCveText:
 
         assert "No CVEs found" in result
 
-    @patch("portScanner.aiohttp.ClientSession.get")
+    @patch("portScanner.scanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_rate_limit_then_success(self, mock_get, scanner):
         mock_response_429 = MockAiohttpResponse(
@@ -157,7 +157,7 @@ class TestGetCveText:
         assert "No CVEs found" in result
         assert mock_get.call_count == 2
 
-    @patch("portScanner.aiohttp.ClientSession.get")
+    @patch("portScanner.scanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_rate_limit_bad_retry_after(self, mock_get, scanner):
         mock_response_429 = MockAiohttpResponse(
@@ -175,7 +175,7 @@ class TestGetCveText:
 
         assert "No CVEs found" in result
 
-    @patch("portScanner.aiohttp.ClientSession.get")
+    @patch("portScanner.scanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_http_error(self, mock_get, scanner):
         mock_response = MockAiohttpResponse(status=500, json_data={})
@@ -185,7 +185,7 @@ class TestGetCveText:
 
         assert "CVE lookup failed" in result
 
-    @patch("portScanner.aiohttp.ClientSession.get")
+    @patch("portScanner.scanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_json_parse_error(self, mock_get, scanner):
         mock_response = MockAiohttpResponse(status=200, json_data={})
@@ -196,7 +196,7 @@ class TestGetCveText:
 
         assert "CVE lookup failed" in result
 
-    @patch("portScanner.aiohttp.ClientSession.get")
+    @patch("portScanner.scanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_all_retries_exhausted(self, mock_get, scanner):
         mock_response = MockAiohttpResponse(status=500, json_data={})
@@ -212,7 +212,7 @@ class TestScanPort:
     @patch.object(PortScanner, "_get_cve_text", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_connection_refused(self, mock_cve, scanner):
-        with patch("portScanner.asyncio.open_connection") as mock_conn:
+        with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.side_effect = ConnectionRefusedError
 
             await scanner._scan_port("127.0.0.1", 22, 1, 0)
@@ -223,7 +223,7 @@ class TestScanPort:
     @patch.object(PortScanner, "_get_cve_text", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_connection_timeout(self, mock_cve, scanner):
-        with patch("portScanner.asyncio.open_connection") as mock_conn:
+        with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.side_effect = asyncio.TimeoutError
 
             await scanner._scan_port("127.0.0.1", 22, 1, 0)
@@ -241,7 +241,7 @@ class TestScanPort:
         mock_writer.drain = AsyncMock()
         mock_writer.wait_closed = AsyncMock()
 
-        with patch("portScanner.asyncio.open_connection") as mock_conn:
+        with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.return_value = (mock_reader, mock_writer)
 
             await scanner._scan_port("127.0.0.1", 22, 1, 0)
@@ -259,7 +259,7 @@ class TestScanPort:
         mock_writer.drain = AsyncMock()
         mock_writer.wait_closed = AsyncMock()
 
-        with patch("portScanner.asyncio.open_connection") as mock_conn:
+        with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.return_value = (mock_reader, mock_writer)
 
             await scanner._scan_port("127.0.0.1", 22, 1, 0)
@@ -278,7 +278,7 @@ class TestScanPort:
         mock_writer.drain = AsyncMock()
         mock_writer.wait_closed = AsyncMock()
 
-        with patch("portScanner.asyncio.open_connection") as mock_conn:
+        with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
             mock_conn.return_value = (mock_reader, mock_writer)
 
             await scanner._scan_port("127.0.0.1", 80, 1, 0)
@@ -290,37 +290,37 @@ class TestScanPort:
 class TestScanValidation:
     @pytest.mark.asyncio
     async def test_invalid_port_start(self, scanner):
-        with patch("portScanner.PortScanner._scan_port"):
+        with patch("portScanner.scanner.PortScanner._scan_port"):
             await scanner.scan("127.0.0.1", port_start=0)
         assert scanner.open_ports == []
 
     @pytest.mark.asyncio
     async def test_invalid_port_end(self, scanner):
-        with patch("portScanner.PortScanner._scan_port"):
+        with patch("portScanner.scanner.PortScanner._scan_port"):
             await scanner.scan("127.0.0.1", port_end=70000)
         assert scanner.open_ports == []
 
     @pytest.mark.asyncio
     async def test_port_start_greater_than_end(self, scanner):
-        with patch("portScanner.PortScanner._scan_port"):
+        with patch("portScanner.scanner.PortScanner._scan_port"):
             await scanner.scan("127.0.0.1", port_start=100, port_end=50)
         assert scanner.open_ports == []
 
     @pytest.mark.asyncio
     async def test_timeout_zero(self, scanner):
-        with patch("portScanner.PortScanner._scan_port"):
+        with patch("portScanner.scanner.PortScanner._scan_port"):
             await scanner.scan("127.0.0.1", timeout=0)
         assert scanner.open_ports == []
 
     @pytest.mark.asyncio
     async def test_threads_zero(self, scanner):
-        with patch("portScanner.PortScanner._scan_port"):
+        with patch("portScanner.scanner.PortScanner._scan_port"):
             await scanner.scan("127.0.0.1", threads=0)
         assert scanner.open_ports == []
 
     @pytest.mark.asyncio
     async def test_delay_negative(self, scanner):
-        with patch("portScanner.PortScanner._scan_port"):
+        with patch("portScanner.scanner.PortScanner._scan_port"):
             await scanner.scan("127.0.0.1", delay=-1)
         assert scanner.open_ports == []
 
@@ -381,26 +381,26 @@ class TestNormalizeVersion:
 
 class TestMain:
     def test_valid_target(self):
-        with patch("portScanner.socket.gethostbyname", return_value="127.0.0.1"):
-            with patch("portScanner._setup_logging"):
-                with patch("portScanner.asyncio.run"):
+        with patch("portScanner.cli.socket.gethostbyname", return_value="127.0.0.1"):
+            with patch("portScanner.cli._setup_logging"):
+                with patch("portScanner.cli.asyncio.run"):
                     from portScanner import main
                     with patch("sys.argv", ["portScanner", "127.0.0.1"]):
                         main()
 
     def test_invalid_hostname_logs_error(self):
-        with patch("portScanner.socket.gethostbyname", side_effect=socket.gaierror):
-            with patch("portScanner.logger.error") as mock_log:
+        with patch("portScanner.cli.socket.gethostbyname", side_effect=socket.gaierror):
+            with patch("portScanner.scanner.logger.error") as mock_log:
                 from portScanner import main
                 with patch("sys.argv", ["portScanner", "invalid-host"]):
                     main()
                 mock_log.assert_called_once_with("Invalid IP address or hostname")
 
     def test_keyboard_interrupt_caught(self):
-        with patch("portScanner.socket.gethostbyname", return_value="127.0.0.1"):
-            with patch("portScanner._setup_logging"):
-                with patch("portScanner.asyncio.run", side_effect=KeyboardInterrupt):
-                    with patch("portScanner.logger.warning") as mock_log:
+        with patch("portScanner.cli.socket.gethostbyname", return_value="127.0.0.1"):
+            with patch("portScanner.cli._setup_logging"):
+                with patch("portScanner.cli.asyncio.run", side_effect=KeyboardInterrupt):
+                    with patch("portScanner.scanner.logger.warning") as mock_log:
                         from portScanner import main
                         with patch("sys.argv", ["portScanner", "127.0.0.1"]):
                             main()
@@ -411,7 +411,8 @@ class TestFileOutput:
     @pytest.mark.asyncio
     async def test_file_handler_logs_scan_results(self, tmp_path, scanner):
         output_file = tmp_path / "results.txt"
-        from portScanner import _setup_logging, logger
+        from portScanner.cli import _setup_logging
+        from portScanner.scanner import logger
         original_handlers = list(logger.handlers)
         try:
             _setup_logging(str(output_file))
@@ -423,7 +424,7 @@ class TestFileOutput:
             mock_writer.wait_closed = AsyncMock()
 
             with patch.object(PortScanner, "_get_cve_text", return_value=""):
-                with patch("portScanner.asyncio.open_connection") as mock_conn:
+                with patch("portScanner.scanner.asyncio.open_connection") as mock_conn:
                     mock_conn.return_value = (mock_reader, mock_writer)
                     await scanner._scan_port("127.0.0.1", 22, 1, 0)
 
