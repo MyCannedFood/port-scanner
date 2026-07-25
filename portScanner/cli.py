@@ -57,6 +57,8 @@ def main() -> None:
                         help="Enable debug-level logging for troubleshooting")
     args: argparse.Namespace = parser.parse_args()
 
+    _setup_logging(args.output, args.verbose)
+
     try:
         ipaddress.ip_address(args.target)
     except ValueError:
@@ -64,9 +66,7 @@ def main() -> None:
             socket.gethostbyname(args.target)
         except socket.gaierror:
             logger.error("Invalid IP address or hostname")
-            return
-
-    _setup_logging(args.output, args.verbose)
+            sys.exit(1)
 
     scanner: PortScanner = PortScanner()
 

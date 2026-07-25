@@ -3,6 +3,8 @@ import os
 import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 import aiohttp
 import pytest
 
@@ -393,7 +395,8 @@ class TestMain:
             with patch("portScanner.scanner.logger.error") as mock_log:
                 from portScanner import main
                 with patch("sys.argv", ["portScanner", "invalid-host"]):
-                    main()
+                    with pytest.raises(SystemExit):
+                        main()
                 mock_log.assert_called_once_with("Invalid IP address or hostname")
 
     def test_keyboard_interrupt_caught(self):
