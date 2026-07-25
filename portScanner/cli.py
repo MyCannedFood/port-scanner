@@ -18,6 +18,7 @@ from portScanner.scanner import (
     DEFAULT_SCAN_TIMEOUT,
     DEFAULT_THREADS,
     DEFAULT_TIMEOUT,
+    TIMING_PROFILES,
     PortScanner,
     expand_targets,
     logger,
@@ -75,12 +76,14 @@ def main() -> None:
                         help=f"Start port (default: {DEFAULT_PORT_START})")
     parser.add_argument("--port-end", type=int, default=DEFAULT_PORT_END,
                         help=f"End port (default: {DEFAULT_PORT_END})")
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
+    parser.add_argument("--timeout", type=float, default=None,
                         help=f"Socket timeout in seconds (default: {DEFAULT_TIMEOUT})")
-    parser.add_argument("--threads", type=int, default=DEFAULT_THREADS,
+    parser.add_argument("--threads", type=int, default=None,
                         help=f"Number of concurrent tasks (default: {DEFAULT_THREADS})")
-    parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
+    parser.add_argument("--delay", type=float, default=None,
                         help=f"Delay between scans in seconds (default: {DEFAULT_DELAY})")
+    parser.add_argument("-T", "--timing", type=int, choices=range(0, 6), default=None,
+                        help="Timing profile 0-5 (paranoid to insane)")
     parser.add_argument("-p", "--ports",
                         help="Ports to scan (e.g. '22,80,443', '1-1000', 'common', 'all')")
     parser.add_argument("-o", "--output", help="Save results to file")
@@ -113,6 +116,18 @@ def main() -> None:
     targets: list[str] = expand_targets(raw_targets)
     for t in targets:
         _validate_target(t)
+
+    if args.timing is not None:
+        profile: dict[str, float | int] = TIMING_PROFILES[args.timing]
+        args.timeout = profile["timeout"] if args.timeout is None else args.timeout
+        args.threads = profile["threads"] if args.threads is None else args.threads
+        args.delay = profile["delay"] if args.delay is None else args.delay
+    if args.timeout is None:
+        args.timeout = DEFAULT_TIMEOUT
+    if args.threads is None:
+        args.threads = DEFAULT_THREADS
+    if args.delay is None:
+        args.delay = DEFAULT_DELAY
 
     _setup_logging(args.output if args.format == "text" else None, args.verbose)
 

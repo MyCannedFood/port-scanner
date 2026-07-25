@@ -22,6 +22,15 @@ DEFAULT_THREADS: int = 50
 DEFAULT_DELAY: float = 0.0
 DEFAULT_SCAN_TIMEOUT: float = 0.0
 
+TIMING_PROFILES: dict[int, dict[str, float | int]] = {
+    0: {"timeout": 5.0, "threads": 5, "delay": 5.0},
+    1: {"timeout": 2.0, "threads": 10, "delay": 1.0},
+    2: {"timeout": 1.0, "threads": 25, "delay": 0.1},
+    3: {"timeout": 1.0, "threads": 50, "delay": 0.0},
+    4: {"timeout": 0.5, "threads": 100, "delay": 0.0},
+    5: {"timeout": 0.3, "threads": 200, "delay": 0.0},
+}
+
 PORTS_COMMON: list[int] = [
     21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143,
     443, 445, 993, 995, 1433, 1521, 2049, 3306, 3389,
