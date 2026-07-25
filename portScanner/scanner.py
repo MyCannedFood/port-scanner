@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import socket
+import ssl
 import time
 from datetime import datetime
 from typing import Any
@@ -55,6 +56,10 @@ BANNER_PATTERNS: list[re.Pattern[bytes]] = [
     re.compile(rb"(\w[\w.-]+)/([\d.]+)"),
     re.compile(rb"(\w[\w.-]+)\s+v?([\d.]+)"),
 ]
+
+TLS_PORTS: set[int] = {443, 465, 563, 636, 853, 989, 990, 992, 993, 994, 995, 8443, 8883, 8888}
+
+GREETING_PORTS: set[int] = {21, 22, 25, 110, 143, 587}
 
 
 def expand_targets(specs: list[str]) -> list[str]:
@@ -211,6 +216,68 @@ class PortScanner:
                 return svc, ver
         return None, None
 
+    @staticmethod
+    def _get_probe(port: int, ip: str) -> bytes:
+        if port in {80, 8000, 8080, 8888}:
+            return f"GET / HTTP/1.0\r\nHost: {ip}\r\n\r\n".encode()
+        return b"\r\n"
+
+    @staticmethod
+    def _is_greeting_port(port: int) -> bool:
+        return port in GREETING_PORTS
+
+    async def _grab_banner(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
+                            ip: str, port: int, timeout: float) -> tuple[str | None, str | None]:
+        banner: bytes = b""
+        if self._is_greeting_port(port):
+            try:
+                banner = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+            except (OSError, asyncio.TimeoutError):
+                pass
+
+        if not banner:
+            probe: bytes = self._get_probe(port, ip)
+            try:
+                writer.write(probe)
+                await asyncio.wait_for(writer.drain(), timeout=timeout)
+                banner = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+            except (OSError, asyncio.TimeoutError):
+                pass
+
+        if banner:
+            svc, ver = self._parse_banner(banner)
+            if svc is not None:
+                return svc, ver
+
+        if port in TLS_PORTS:
+            try:
+                ctx: ssl.SSLContext = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                tls_reader, tls_writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, port, ssl=ctx), timeout=timeout
+                )
+                try:
+                    banner = await asyncio.wait_for(tls_reader.read(4096), timeout=timeout)
+                except (OSError, asyncio.TimeoutError):
+                    pass
+                if not banner:
+                    probe = self._get_probe(port, ip)
+                    try:
+                        tls_writer.write(probe)
+                        await asyncio.wait_for(tls_writer.drain(), timeout=timeout)
+                        banner = await asyncio.wait_for(tls_reader.read(4096), timeout=timeout)
+                    except (OSError, asyncio.TimeoutError):
+                        pass
+                tls_writer.close()
+                await tls_writer.wait_closed()
+                if banner:
+                    return self._parse_banner(banner)
+            except (OSError, asyncio.TimeoutError):
+                pass
+
+        return None, None
+
     async def _scan_port(self, target_ip: str, ip: str, port: int, timeout: float, delay: float) -> None:
         await asyncio.sleep(delay)
 
@@ -234,12 +301,7 @@ class PortScanner:
         cve_output: str = ""
 
         try:
-            writer.write(b"\r\n")
-            await asyncio.wait_for(writer.drain(), timeout=timeout)
-            banner: bytes = await asyncio.wait_for(reader.read(1024), timeout=timeout)
-
-            logger.debug("Port %d: raw banner %r", port, banner)
-            svc, ver = self._parse_banner(banner)
+            svc, ver = await self._grab_banner(reader, writer, ip, port, timeout)
             if svc is not None:
                 service = svc
                 version = ver if ver is not None else "unknown"
