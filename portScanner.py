@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-import requests
+import aiohttp
 from tqdm import tqdm
 
 logger: logging.Logger = logging.getLogger("portScanner")
@@ -76,53 +76,49 @@ class PortScanner:
             params["apiKey"] = self.api_key
 
         logger.debug("Looking up CVEs for %s %s", service, version)
-        for attempt in range(3):
-            async with self._rate_lock:
-                elapsed = time.monotonic() - self._last_request_time
-                if elapsed < self._rate_interval:
-                    logger.debug("Rate limit: sleeping %.1fs", self._rate_interval - elapsed)
-                    await asyncio.sleep(self._rate_interval - elapsed)
-                self._last_request_time = time.monotonic()
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(3):
+                async with self._rate_lock:
+                    elapsed = time.monotonic() - self._last_request_time
+                    if elapsed < self._rate_interval:
+                        logger.debug("Rate limit: sleeping %.1fs", self._rate_interval - elapsed)
+                        await asyncio.sleep(self._rate_interval - elapsed)
+                    self._last_request_time = time.monotonic()
 
-            try:
-                response = await asyncio.to_thread(
-                    requests.get,
-                    "https://services.nvd.nist.gov/rest/json/cves/2.0",
-                    params=params,
-                    timeout=10
-                )
-                if response.status_code == 429:
-                    try:
-                        retry_after = int(response.headers.get("Retry-After", 5))
-                    except (ValueError, TypeError):
-                        retry_after = 5
-                    await asyncio.sleep(retry_after)
-                    continue
-                response.raise_for_status()
-            except requests.exceptions.HTTPError as e:
-                status = e.response.status_code if e.response is not None else 0
-                if 400 <= status < 500 and status != 429:
-                    return f"         [!] CVE lookup failed (client error {status}): {e}\n"
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                return f"         [!] CVE lookup failed: {e}\n"
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                return f"         [!] CVE lookup failed: {e}\n"
-            except requests.exceptions.RequestException as e:
-                return f"         [!] CVE lookup failed: {e}\n"
+                try:
+                    async with session.get(
+                        "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as response:
+                        if response.status == 429:
+                            try:
+                                retry_after = int(response.headers.get("Retry-After", 5))
+                            except (ValueError, TypeError):
+                                retry_after = 5
+                            await asyncio.sleep(retry_after)
+                            continue
+                        response.raise_for_status()
+                        data = await response.json()
+                except aiohttp.ClientResponseError as e:
+                    status = e.status
+                    if 400 <= status < 500 and status != 429:
+                        return f"         [!] CVE lookup failed (client error {status}): {e}\n"
+                    if attempt < 2:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return f"         [!] CVE lookup failed: {e}\n"
+                except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as e:
+                    if attempt < 2:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return f"         [!] CVE lookup failed: {e}\n"
+                except (aiohttp.ClientError, ValueError) as e:
+                    return f"         [!] CVE lookup failed: {e}\n"
+                else:
+                    break
             else:
-                break
-        else:
-            return "         [!] CVE lookup failed after 3 attempts\n"
-
-        try:
-            data: Any = response.json()
-        except ValueError as e:
-            return f"         [!] Failed to parse CVE response: {e}\n"
+                return "         [!] CVE lookup failed after 3 attempts\n"
 
         vulns: list[Any] = data.get("vulnerabilities", [])
         if not vulns:

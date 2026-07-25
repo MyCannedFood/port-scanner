@@ -3,8 +3,8 @@ import os
 import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
-import requests
 
 from portScanner import SERVICE_PORTS, PortScanner
 
@@ -63,32 +63,59 @@ class TestParseBanner:
         assert v is None
 
 
+class MockAiohttpResponse:
+    def __init__(self, status=200, json_data=None, headers=None):
+        self.status = status
+        self._json_data = json_data if json_data is not None else {}
+        self.headers = headers or {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def json(self):
+        return self._json_data
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            request_info = MagicMock()
+            request_info.real_url = "http://example.com/"
+            raise aiohttp.ClientResponseError(
+                request_info=request_info, history=(),
+                status=self.status, message="HTTP Error",
+                headers=self.headers,
+            )
+
+
 class TestGetCveText:
-    @patch("portScanner.requests.get")
+    @patch("portScanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_success_with_cves(self, mock_get, scanner):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "vulnerabilities": [
-                {
-                    "cve": {
-                        "id": "CVE-2024-0001",
-                        "descriptions": [
-                            {"lang": "en", "value": "Test vulnerability one"}
-                        ],
-                    }
-                },
-                {
-                    "cve": {
-                        "id": "CVE-2024-0002",
-                        "descriptions": [
-                            {"lang": "en", "value": "Test vulnerability two"}
-                        ],
-                    }
-                },
-            ]
-        }
+        mock_response = MockAiohttpResponse(
+            status=200,
+            json_data={
+                "vulnerabilities": [
+                    {
+                        "cve": {
+                            "id": "CVE-2024-0001",
+                            "descriptions": [
+                                {"lang": "en", "value": "Test vulnerability one"}
+                            ],
+                        }
+                    },
+                    {
+                        "cve": {
+                            "id": "CVE-2024-0002",
+                            "descriptions": [
+                                {"lang": "en", "value": "Test vulnerability two"}
+                            ],
+                        }
+                    },
+                ]
+            },
+        )
         mock_get.return_value = mock_response
 
         result = await scanner._get_cve_text("OpenSSH", "8.9")
@@ -98,29 +125,31 @@ class TestGetCveText:
         assert "Found 2 CVE(s)" in result
         mock_get.assert_called_once()
 
-    @patch("portScanner.requests.get")
+    @patch("portScanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_success_no_cves(self, mock_get, scanner):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"vulnerabilities": []}
+        mock_response = MockAiohttpResponse(
+            status=200,
+            json_data={"vulnerabilities": []},
+        )
         mock_get.return_value = mock_response
 
         result = await scanner._get_cve_text("NonExistent", "1.0")
 
         assert "No CVEs found" in result
 
-    @patch("portScanner.requests.get")
+    @patch("portScanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_rate_limit_then_success(self, mock_get, scanner):
-        mock_response_429 = MagicMock()
-        mock_response_429.status_code = 429
-        mock_response_429.headers = {"Retry-After": "1"}
-
-        mock_response_200 = MagicMock()
-        mock_response_200.status_code = 200
-        mock_response_200.json.return_value = {"vulnerabilities": []}
-
+        mock_response_429 = MockAiohttpResponse(
+            status=429,
+            json_data={},
+            headers={"Retry-After": "1"},
+        )
+        mock_response_200 = MockAiohttpResponse(
+            status=200,
+            json_data={"vulnerabilities": []},
+        )
         mock_get.side_effect = [mock_response_429, mock_response_200]
 
         result = await scanner._get_cve_text("OpenSSH", "8.9")
@@ -128,57 +157,49 @@ class TestGetCveText:
         assert "No CVEs found" in result
         assert mock_get.call_count == 2
 
-    @patch("portScanner.requests.get")
+    @patch("portScanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_rate_limit_bad_retry_after(self, mock_get, scanner):
-        mock_response_429 = MagicMock()
-        mock_response_429.status_code = 429
-        mock_response_429.headers = {"Retry-After": "not-a-number"}
-
-        mock_response_200 = MagicMock()
-        mock_response_200.status_code = 200
-        mock_response_200.json.return_value = {"vulnerabilities": []}
-
+        mock_response_429 = MockAiohttpResponse(
+            status=429,
+            json_data={},
+            headers={"Retry-After": "not-a-number"},
+        )
+        mock_response_200 = MockAiohttpResponse(
+            status=200,
+            json_data={"vulnerabilities": []},
+        )
         mock_get.side_effect = [mock_response_429, mock_response_200]
 
         result = await scanner._get_cve_text("OpenSSH", "8.9")
 
         assert "No CVEs found" in result
 
-    @patch("portScanner.requests.get")
+    @patch("portScanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_http_error(self, mock_get, scanner):
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.raise_for_status.side_effect = (
-            requests.exceptions.HTTPError("500 Server Error")
-        )
+        mock_response = MockAiohttpResponse(status=500, json_data={})
         mock_get.return_value = mock_response
 
         result = await scanner._get_cve_text("OpenSSH", "8.9")
 
         assert "CVE lookup failed" in result
 
-    @patch("portScanner.requests.get")
+    @patch("portScanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_json_parse_error(self, mock_get, scanner):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.side_effect = ValueError("Invalid JSON")
+        mock_response = MockAiohttpResponse(status=200, json_data={})
+        mock_response.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
         mock_get.return_value = mock_response
 
         result = await scanner._get_cve_text("OpenSSH", "8.9")
 
-        assert "Failed to parse CVE response" in result
+        assert "CVE lookup failed" in result
 
-    @patch("portScanner.requests.get")
+    @patch("portScanner.aiohttp.ClientSession.get")
     @pytest.mark.asyncio
     async def test_all_retries_exhausted(self, mock_get, scanner):
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.raise_for_status.side_effect = (
-            requests.exceptions.HTTPError("500 Server Error")
-        )
+        mock_response = MockAiohttpResponse(status=500, json_data={})
         mock_get.return_value = mock_response
 
         result = await scanner._get_cve_text("OpenSSH", "8.9")

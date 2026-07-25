@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "requests>=2.28,<3",
+    "aiohttp>=3.9,<4",
     "tqdm>=4.64,<5",
 ]
 
@@ -37,7 +37,6 @@ dev = [
     "pytest-asyncio>=0.24,<1",
     "mypy>=1.0,<2",
     "ruff>=0.5,<1",
-    "types-requests>=2.28",
 ]
 
 [project.scripts]
