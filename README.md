@@ -20,7 +20,7 @@ Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
 ## Requirements
 
 - Python 3.9+
-- `requests`, `tqdm` libraries
+- `aiohttp`, `tqdm` libraries
 
 Install:
 
