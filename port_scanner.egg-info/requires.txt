@@ -1,9 +1,0 @@
-requests<3,>=2.28
-tqdm<5,>=4.64
-
-[dev]
-pytest<9,>=8
-pytest-asyncio<1,>=0.24
-mypy<2,>=1.0
-ruff<1,>=0.5
-types-requests>=2.28
