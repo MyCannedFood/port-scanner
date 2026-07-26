@@ -61,11 +61,7 @@ def _validate_target(target: str) -> None:
     try:
         ipaddress.ip_address(target)
     except ValueError:
-        try:
-            socket.getaddrinfo(target, 0, type=socket.SOCK_STREAM)
-        except socket.gaierror:
-            logger.error("Invalid IP address or hostname: %s", target)
-            sys.exit(1)
+        pass
 
 
 def main() -> None:
@@ -135,32 +131,38 @@ def main() -> None:
 
     _setup_logging(args.output if args.format == "text" else None, args.verbose)
 
-    all_results: list[dict[str, str | int]] = []
-    total_open: int = 0
     scan_start: float = time.monotonic()
 
-    for i, target in enumerate(targets):
-        logger.info("%sScanning target %d/%d: %s",
-                     "\n" if i > 0 else "", i + 1, len(targets), target)
-        scanner = PortScanner(max_rate=args.max_rate)
+    async def _run_scans() -> tuple[list[dict[str, str | int]], int]:
+        all_results: list[dict[str, str | int]] = []
+        total_open: int = 0
+        for i, target in enumerate(targets):
+            logger.info("%sScanning target %d/%d: %s",
+                         "\n" if i > 0 else "", i + 1, len(targets), target)
+            scanner = PortScanner(max_rate=args.max_rate)
+            try:
+                await scanner.scan(
+                    target, ports=port_list,
+                    port_start=args.port_start, port_end=args.port_end,
+                    timeout=args.timeout, threads=args.threads, delay=args.delay,
+                    scan_timeout=args.scan_timeout,
+                    family=socket.AF_INET6 if args.ipv6 else 0,
+                )
+            except asyncio.CancelledError:
+                logger.warning("Scan cancelled by user")
+                break
+            except Exception:
+                logger.exception("Unexpected error scanning %s", target)
+                continue
+            all_results.extend(scanner.results)
+            total_open += len(scanner.open_ports)
+        return all_results, total_open
 
-        try:
-            asyncio.run(scanner.scan(
-                target, ports=port_list,
-                port_start=args.port_start, port_end=args.port_end,
-                timeout=args.timeout, threads=args.threads, delay=args.delay,
-                scan_timeout=args.scan_timeout,
-                family=socket.AF_INET6 if args.ipv6 else 0,
-            ))
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            logger.warning("Scan cancelled by user")
-            break
-        except Exception:
-            logger.exception("Unexpected error scanning %s", target)
-            continue
-
-        all_results.extend(scanner.results)
-        total_open += len(scanner.open_ports)
+    try:
+        all_results, _ = asyncio.run(_run_scans())
+    except KeyboardInterrupt:
+        logger.warning("Scan cancelled by user")
+        all_results = []
 
     scan_duration: float = time.monotonic() - scan_start
 

@@ -132,7 +132,8 @@ class PortScanner:
                 break
         else:
             return None
-        return data.get("vulnerabilities", [])
+        vulns: list[Any] = data.get("vulnerabilities", [])
+        return vulns
 
     async def _get_cve_text(self, service: str, version: str) -> str:
         version = self._normalize_version(version)
@@ -185,7 +186,11 @@ class PortScanner:
             match = pattern.search(banner)
             if match:
                 svc = match.group(1).decode("utf-8", errors="replace")
-                ver = match.group(2).decode("utf-8", errors="replace") if match.lastindex and match.lastindex >= 2 else "unknown"
+                ver = (
+                    match.group(2).decode("utf-8", errors="replace")
+                    if match.lastindex and match.lastindex >= 2
+                    else "unknown"
+                )
                 return svc, ver
         return None, None
 
@@ -245,7 +250,7 @@ class PortScanner:
                     banner = await asyncio.wait_for(tls_reader.read(4096), timeout=timeout)
                 except (OSError, asyncio.TimeoutError):
                     pass
-                if not banner:
+                if not banner and tls_writer is not None:
                     probe = self._get_probe(port, ip)
                     try:
                         tls_writer.write(probe)

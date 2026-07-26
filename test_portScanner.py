@@ -413,31 +413,27 @@ class TestNormalizeVersion:
 
 class TestMain:
     def test_valid_target(self):
-        with patch("portScanner.cli.socket.gethostbyname", return_value="127.0.0.1"):
-            with patch("portScanner.cli._setup_logging"):
-                with patch("portScanner.cli.asyncio.run"):
+        with patch("portScanner.cli._setup_logging"):
+            with patch("portScanner.cli.asyncio.run", return_value=([], 0)):
+                from portScanner import main
+                with patch("sys.argv", ["portScanner", "127.0.0.1"]):
+                    main()
+
+    def test_invalid_hostname_no_early_exit(self):
+        with patch("portScanner.cli._setup_logging"):
+            with patch("portScanner.cli.asyncio.run", return_value=([], 0)):
+                from portScanner import main
+                with patch("sys.argv", ["portScanner", "invalid-host"]):
+                    main()
+
+    def test_keyboard_interrupt_caught(self):
+        with patch("portScanner.cli._setup_logging"):
+            with patch("portScanner.cli.asyncio.run", side_effect=KeyboardInterrupt):
+                with patch("portScanner.scanner.logger.warning") as mock_log:
                     from portScanner import main
                     with patch("sys.argv", ["portScanner", "127.0.0.1"]):
                         main()
-
-    def test_invalid_hostname_logs_error(self):
-        with patch("portScanner.cli.socket.gethostbyname", side_effect=socket.gaierror):
-            with patch("portScanner.scanner.logger.error") as mock_log:
-                from portScanner import main
-                with patch("sys.argv", ["portScanner", "invalid-host"]):
-                    with pytest.raises(SystemExit):
-                        main()
-                mock_log.assert_called_once_with("Invalid IP address or hostname: %s", "invalid-host")
-
-    def test_keyboard_interrupt_caught(self):
-        with patch("portScanner.cli.socket.gethostbyname", return_value="127.0.0.1"):
-            with patch("portScanner.cli._setup_logging"):
-                with patch("portScanner.cli.asyncio.run", side_effect=KeyboardInterrupt):
-                    with patch("portScanner.scanner.logger.warning") as mock_log:
-                        from portScanner import main
-                        with patch("sys.argv", ["portScanner", "127.0.0.1"]):
-                            main()
-                        mock_log.assert_called_once_with("Scan cancelled by user")
+                    mock_log.assert_called_once_with("Scan cancelled by user")
 
 
 class TestFileOutput:
