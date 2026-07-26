@@ -358,8 +358,9 @@ class PortScanner:
         scan_timeout: float = DEFAULT_SCAN_TIMEOUT,
         family: int = 0,
     ) -> None:
-        self.open_ports = []
-        self.results = []
+        async with self._ports_lock:
+            self.open_ports = []
+            self.results = []
 
         if ports is not None:
             for p in ports:
