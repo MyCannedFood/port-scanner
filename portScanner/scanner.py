@@ -177,7 +177,7 @@ class PortScanner:
                     if d.get("lang") == "en":
                         desc = d.get("value", "N/A")
                         break
-            lines.append(f"           - {cve_id}: {desc[:120]}\n")
+            lines.append(f"           - {cve_id}: {desc}\n")
         return "".join(lines)
 
     @staticmethod
