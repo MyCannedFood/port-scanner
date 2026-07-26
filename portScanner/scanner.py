@@ -442,3 +442,8 @@ class PortScanner:
 
         except Exception:
             logger.exception("Unexpected error during scan")
+
+
+if __name__ == "__main__":
+    from portScanner.cli import main
+    main()
