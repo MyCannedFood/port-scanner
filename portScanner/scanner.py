@@ -315,14 +315,14 @@ class PortScanner:
 
         logger.debug("Port %d: connected", port)
 
-        async with self._ports_lock:
-            self.open_ports.append(port)
-
         service = "unknown"
         version = "unknown"
         cve_output: str = ""
 
         try:
+            async with self._ports_lock:
+                self.open_ports.append(port)
+
             svc, ver = await self._grab_banner(reader, writer, ip, port, timeout, family)
             if svc is not None:
                 service = svc
