@@ -271,10 +271,11 @@ class PortScanner:
                 return svc, ver
 
         if port in TLS_PORTS:
+            ctx: ssl.SSLContext = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            tls_writer: asyncio.StreamWriter | None = None
             try:
-                ctx: ssl.SSLContext = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
                 tls_reader, tls_writer = await asyncio.wait_for(
                     asyncio.open_connection(ip, port, ssl=ctx, family=family), timeout=timeout
                 )
@@ -290,12 +291,17 @@ class PortScanner:
                         banner = await asyncio.wait_for(tls_reader.read(4096), timeout=timeout)
                     except (OSError, asyncio.TimeoutError):
                         pass
-                tls_writer.close()
-                await tls_writer.wait_closed()
                 if banner:
                     return self._parse_banner(banner)
             except (OSError, asyncio.TimeoutError):
                 pass
+            finally:
+                if tls_writer is not None:
+                    try:
+                        tls_writer.close()
+                        await tls_writer.wait_closed()
+                    except OSError:
+                        pass
 
         return None, None
 
