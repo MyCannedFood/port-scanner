@@ -1,5 +1,6 @@
 from portScanner.cli import main as main
 from portScanner.scanner import DEFAULT_DELAY as DEFAULT_DELAY
+from portScanner.scanner import DEFAULT_MAX_RATE as DEFAULT_MAX_RATE
 from portScanner.scanner import DEFAULT_PORT_END as DEFAULT_PORT_END
 from portScanner.scanner import DEFAULT_PORT_START as DEFAULT_PORT_START
 from portScanner.scanner import DEFAULT_SCAN_TIMEOUT as DEFAULT_SCAN_TIMEOUT
@@ -9,5 +10,6 @@ from portScanner.scanner import PORTS_COMMON as PORTS_COMMON
 from portScanner.scanner import SERVICE_PORTS as SERVICE_PORTS
 from portScanner.scanner import TIMING_PROFILES as TIMING_PROFILES
 from portScanner.scanner import PortScanner as PortScanner
+from portScanner.scanner import RateLimiter as RateLimiter
 from portScanner.scanner import expand_targets as expand_targets
 from portScanner.scanner import parse_port_spec as parse_port_spec

@@ -22,6 +22,7 @@ DEFAULT_TIMEOUT: float = 1.0
 DEFAULT_THREADS: int = 50
 DEFAULT_DELAY: float = 0.0
 DEFAULT_SCAN_TIMEOUT: float = 0.0
+DEFAULT_MAX_RATE: float = 0.0
 
 TIMING_PROFILES: dict[int, dict[str, float | int]] = {
     0: {"timeout": 5.0, "threads": 5, "delay": 5.0},
@@ -131,6 +132,34 @@ def resolve_target(target: str, family: int = 0) -> tuple[str, int]:
     raise socket.gaierror(f"Could not resolve {target}")
 
 
+class RateLimiter:
+    def __init__(self, max_rate: float) -> None:
+        self._max_rate = max_rate
+        self._tokens = max_rate
+        self._last_refill = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        if self._max_rate <= 0:
+            return
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_refill
+            self._tokens = min(self._max_rate, self._tokens + elapsed * self._max_rate)
+            self._last_refill = now
+            if self._tokens >= 1:
+                self._tokens -= 1
+                return
+            wait = (1 - self._tokens) / self._max_rate
+            self._tokens = 0.0
+            self._last_refill = now + wait
+        await asyncio.sleep(wait)
+
+    @property
+    def max_rate(self) -> float:
+        return self._max_rate
+
+
 class PortScanner:
     service_ports: dict[int, str]
     open_ports: list[int]
@@ -140,8 +169,10 @@ class PortScanner:
     _ports_lock: asyncio.Lock
     _last_request_time: float
     _rate_interval: float
+    _rate_limiter: RateLimiter
 
-    def __init__(self, service_ports: dict[int, str] | None = None, api_key: str | None = None) -> None:
+    def __init__(self, service_ports: dict[int, str] | None = None, api_key: str | None = None,
+                 max_rate: float = DEFAULT_MAX_RATE) -> None:
         self.service_ports = service_ports or SERVICE_PORTS
         self.open_ports = []
         self.results = []
@@ -150,6 +181,7 @@ class PortScanner:
         self._ports_lock = asyncio.Lock()
         self._last_request_time = 0.0
         self._rate_interval = 6.0 if not self.api_key else 0.6
+        self._rate_limiter = RateLimiter(max_rate)
 
     @staticmethod
     def _normalize_version(version: str) -> str:
@@ -308,6 +340,7 @@ class PortScanner:
     async def _scan_port(self, target_ip: str, ip: str, port: int, timeout: float, delay: float,
                           family: int = 0) -> None:
         await asyncio.sleep(delay)
+        await self._rate_limiter.acquire()
 
         logger.debug("Connecting to %s:%d", ip, port)
         writer = None

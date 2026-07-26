@@ -13,6 +13,7 @@ from io import StringIO
 
 from portScanner.scanner import (
     DEFAULT_DELAY,
+    DEFAULT_MAX_RATE,
     DEFAULT_PORT_END,
     DEFAULT_PORT_START,
     DEFAULT_SCAN_TIMEOUT,
@@ -93,6 +94,8 @@ def main() -> None:
                         help="Force IPv6 resolution")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging for troubleshooting")
+    parser.add_argument("--max-rate", type=float, default=DEFAULT_MAX_RATE,
+                        help=f"Max connections per second (0 = unlimited, default: {DEFAULT_MAX_RATE})")
     parser.add_argument("--format", "-f", choices=["text", "json", "csv"], default="text",
                         help="Output format (default: text)")
     args: argparse.Namespace = parser.parse_args()
@@ -140,7 +143,7 @@ def main() -> None:
     for i, target in enumerate(targets):
         logger.info("%sScanning target %d/%d: %s",
                      "\n" if i > 0 else "", i + 1, len(targets), target)
-        scanner = PortScanner()
+        scanner = PortScanner(max_rate=args.max_rate)
 
         try:
             asyncio.run(scanner.scan(
