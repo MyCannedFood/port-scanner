@@ -166,6 +166,13 @@ def main() -> None:
         _write_structured_output(all_results, args, scan_duration, port_list, targets)
 
 
+def _sanitize_csv(value: str) -> str:
+    val = str(value)
+    if val and val[0] in "=+-@":
+        return "'" + val
+    return val
+
+
 def _write_structured_output(
     results: list[dict[str, str | int]], args: argparse.Namespace, duration: float,
     port_list: list[int] | None, targets: list[str],
@@ -187,7 +194,8 @@ def _write_structured_output(
         buf = StringIO()
         writer = csv.DictWriter(buf, fieldnames=["target", "port", "service", "version", "cve"])
         writer.writeheader()
-        writer.writerows(results)
+        sanitized = [{k: _sanitize_csv(v) if isinstance(v, str) else v for k, v in row.items()} for row in results]
+        writer.writerows(sanitized)
         output = buf.getvalue()
 
     if args.output:

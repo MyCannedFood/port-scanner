@@ -10,11 +10,14 @@ Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
 - **Banner grabbing** — captures service banners from open ports with regex-based parsing
 - **Service detection** — fallback to well-known port mapping when banner parsing fails
 - **CVE lookup** — queries NVD API for known vulnerabilities with rate limiting and retry
-- **Configurable** — port range, timeout, concurrency, delay, scan timeout, and output file via CLI
+- **Flexible port specification** — ranges (`1-1000`), comma lists (`22,80,443`), named sets (`common`, `all`)
+- **CIDR & multi-target** — scan entire subnets or load targets from a file
+- **Timing profiles** — preset profiles 0–5 (paranoid to insane)
+- **Multiple output formats** — text, JSON, or CSV
 - **Progress bar** — real-time scan progress with `tqdm`
-- **Save output** — export results to a file with `-o`
 - **Overall scan timeout** — prevent hangs with `--scan-timeout`
 - **Rate limiting** — respects NVD API limits (6s interval without key, 0.6s with key)
+- **IPv6 support** — force IPv6 resolution with `--ipv6`
 - **Verbose mode** — `--verbose` for debug-level logging to aid troubleshooting
 
 ## Requirements
@@ -42,25 +45,35 @@ pip install -e ".[dev]"
 port-scanner <target> [options]
 ```
 
-Or directly:
-
-```bash
-python portScanner.py <target> [options]
-```
-
 ### Arguments
 
 | Argument | Default | Description |
 |---|---|---|
-| `target` | — | Target IP address or hostname (required) |
-| `--port-start` | 20 | Starting port |
-| `--port-end` | 3306 | Ending port |
+| `target` | — | Target IP address, hostname, or CIDR (e.g. `192.168.1.0/24`) |
+| `-iL, --input-list` | — | File containing target hosts/networks (one per line, `#` comments) |
+| `-p, --ports` | — | Port specification: `22,80,443`, `1-1000`, `common`, or `all` |
+| `--port-start` | 20 | Starting port (when `-p` is not used) |
+| `--port-end` | 3306 | Ending port (when `-p` is not used) |
 | `--timeout` | 1 | Socket timeout in seconds |
 | `--threads` | 50 | Number of concurrent tasks |
 | `--delay` | 0 | Delay between scans in seconds |
+| `-T, --timing` | — | Timing profile 0–5 (paranoid→insane, overrides timeout/threads/delay) |
+| `-f, --format` | text | Output format: `text`, `json`, or `csv` |
 | `-o, --output` | — | Save results to file |
 | `--scan-timeout` | 0 | Total scan timeout in seconds (0 = no limit) |
-| `--verbose, -v` | — | Enable debug-level logging for troubleshooting |
+| `-6, --ipv6` | — | Force IPv6 resolution |
+| `-v, --verbose` | — | Enable debug-level logging for troubleshooting |
+
+### Timing Profiles
+
+| Profile | Name | Timeout | Threads | Delay |
+|---|---|---|---|---|
+| 0 | Paranoid | 5.0s | 5 | 5.0s |
+| 1 | Sneaky | 2.0s | 10 | 1.0s |
+| 2 | Polite | 1.0s | 25 | 0.1s |
+| 3 | Normal | 1.0s | 50 | 0.0s |
+| 4 | Aggressive | 0.5s | 100 | 0.0s |
+| 5 | Insane | 0.3s | 200 | 0.0s |
 
 ### CVE Lookup
 
@@ -77,23 +90,43 @@ port-scanner scanme.nmap.org
 # Scan default range (20-3306)
 port-scanner 192.168.1.1
 
-# Scan common ports only
-port-scanner 192.168.1.1 --port-start 1 --port-end 1024
+# Scan specific ports
+port-scanner scanme.nmap.org -p 22,80,443,8080
 
-# Fast scan with higher concurrency and lower timeout
-port-scanner 10.0.0.1 --timeout 0.5 --threads 100
+# Scan common ports (well-known list)
+port-scanner 10.0.0.1 -p common
 
-# Slow scan with delay to avoid detection
-port-scanner 192.168.1.1 --delay 0.1 --threads 10
+# Scan all 65535 ports
+port-scanner 192.168.1.1 -p all
 
-# Save results to file
-port-scanner scanme.nmap.org -o results.txt
+# Scan a subnet
+port-scanner 192.168.1.0/28
+
+# Scan targets from a file
+port-scanner -iL targets.txt
+
+# Fast scan with aggressive timing
+port-scanner 10.0.0.1 -T 4
+
+# Slow scan to avoid detection
+port-scanner 192.168.1.1 -T 0
+
+# Export results as JSON
+port-scanner scanme.nmap.org -f json -o results.json
+
+# Export results as CSV
+port-scanner scanme.nmap.org -f csv -o results.csv
+
+# Scan with overall timeout
+port-scanner scanme.nmap.org --scan-timeout 60
 
 # Verbose mode for troubleshooting
 port-scanner 192.168.1.1 --verbose
 ```
 
 ## Output
+
+### Text format
 
 ```
 ============================================================
@@ -117,20 +150,44 @@ port-scanner 192.168.1.1 --verbose
 ============================================================
 ```
 
-## Development
+### JSON format
 
-Run tests, type checking, and linting:
+```json
+{
+  "targets": ["45.33.32.156"],
+  "port_start": 20,
+  "port_end": 3306,
+  "total_ports": 3287,
+  "duration_seconds": 14.69,
+  "open_ports_count": 2,
+  "results": [
+    {"target": "45.33.32.156", "port": 22, "service": "OpenSSH", "version": "6.6.1p1", "cve": "..."},
+    {"target": "45.33.32.156", "port": 80, "service": "HTTP", "version": "unknown", "cve": "..."}
+  ]
+}
+```
+
+### CSV format
+
+```csv
+target,port,service,version,cve
+45.33.32.156,22,OpenSSH,6.6.1p1,...
+45.33.32.156,80,HTTP,unknown,...
+```
+
+## Development
 
 ```bash
 pytest -v
-mypy portScanner.py
-ruff check portScanner.py test_portScanner.py
+mypy portScanner/
+ruff check portScanner/ test_portScanner.py
 ```
 
 ## Notes
 
-- Banner grabbing sends `\r\n` and reads up to 1024 bytes
+- Banner grabbing sends `\r\n` (or HTTP GET on web ports) and reads up to 4096 bytes
 - CVE lookup is limited to the first 3 results per service and normalizes versions for broader matching
-- Use `--delay` to rate-limit scans and avoid being blocked
+- Use `--delay` or timing profiles to rate-limit scans and avoid being blocked
 - NVD API rate limits apply: 5 req/30s without key, 50 req/30s with key
-- IPv6 addresses are accepted but resolved via `socket.gethostbyname()` which returns an IPv4 address; IPv6-only hosts are not supported
+- IPv6 is supported natively via `getaddrinfo`; use `--ipv6` to force IPv6 resolution
+- CIDR notation expands to all host addresses in the network
