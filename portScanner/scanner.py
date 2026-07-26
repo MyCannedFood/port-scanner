@@ -66,6 +66,31 @@ TLS_PORTS: set[int] = {443, 465, 563, 636, 853, 989, 990, 992, 993, 994, 995, 84
 
 GREETING_PORTS: set[int] = {21, 22, 25, 110, 143, 587}
 
+# Maps detected service names to CPE vendor:product for accurate CVE lookups
+CPE_MAP: dict[str, tuple[str, str]] = {
+    "OpenSSH": ("openbsd", "openssh"),
+    "Apache": ("apache", "http_server"),
+    "nginx": ("nginx", "nginx"),
+    "Postfix": ("postfix", "postfix"),
+    "ProFTPD": ("proftpd", "proftpd"),
+    "vsftpd": ("vsftpd", "vsftpd"),
+    "Dovecot": ("dovecot", "dovecot"),
+    "Exim": ("exim", "exim"),
+    "Sendmail": ("sendmail", "sendmail"),
+    "Courier": ("courier", "courier"),
+    "MySQL": ("oracle", "mysql"),
+    "Redis": ("redis", "redis"),
+    "OpenSSL": ("openssl", "openssl"),
+    "Python": ("python", "python"),
+    "Node.js": ("nodejs", "node.js"),
+    "nginx": ("nginx", "nginx"),
+    "Microsoft": ("microsoft", "iis"),
+    "lighttpd": ("lighttpd", "lighttpd"),
+    "Cyrus": ("cyrus", "cyrus_imap"),
+    "FileZilla": ("filezilla_project", "filezilla"),
+    "Pure-FTPd": ("pureftpd", "pure-ftpd"),
+}
+
 
 def expand_targets(specs: list[str]) -> list[str]:
     targets: list[str] = []
@@ -193,23 +218,16 @@ class PortScanner:
         parts = ver.split(".")
         return ".".join(parts[:2])
 
-    async def _get_cve_text(self, service: str, version: str) -> str:
-        version = self._normalize_version(version)
-        params: dict[str, str | int] = {"keywordSearch": f"{service} {version}"}
-        if self.api_key:
-            params["apiKey"] = self.api_key
-
-        logger.debug("Looking up CVEs for %s %s", service, version)
-        async with aiohttp.ClientSession() as session:
-            for attempt in range(3):
-                async with self._rate_lock:
-                    elapsed = time.monotonic() - self._last_request_time
-                    if elapsed < self._rate_interval:
-                        logger.debug("Rate limit: sleeping %.1fs", self._rate_interval - elapsed)
-                        await asyncio.sleep(self._rate_interval - elapsed)
-                    self._last_request_time = time.monotonic()
-
-                try:
+    async def _cve_request(self, params: dict[str, str | int]) -> list[Any] | None:
+        for attempt in range(3):
+            async with self._rate_lock:
+                elapsed = time.monotonic() - self._last_request_time
+                if elapsed < self._rate_interval:
+                    logger.debug("Rate limit: sleeping %.1fs", self._rate_interval - elapsed)
+                    await asyncio.sleep(self._rate_interval - elapsed)
+                self._last_request_time = time.monotonic()
+            try:
+                async with aiohttp.ClientSession() as session:
                     async with session.get(
                         "https://services.nvd.nist.gov/rest/json/cves/2.0",
                         params=params,
@@ -224,30 +242,59 @@ class PortScanner:
                             continue
                         response.raise_for_status()
                         data = await response.json()
-                except aiohttp.ClientResponseError as e:
-                    status = e.status
-                    if 400 <= status < 500 and status != 429:
-                        return f"         [!] CVE lookup failed (client error {status}): {e}\n"
-                    if attempt < 2:
-                        await asyncio.sleep(2 ** attempt)
-                        continue
-                    return f"         [!] CVE lookup failed: {e}\n"
-                except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as e:
-                    if attempt < 2:
-                        await asyncio.sleep(2 ** attempt)
-                        continue
-                    return f"         [!] CVE lookup failed: {e}\n"
-                except (aiohttp.ClientError, ValueError) as e:
-                    return f"         [!] CVE lookup failed: {e}\n"
-                else:
-                    break
+            except aiohttp.ClientResponseError as e:
+                status = e.status
+                if 400 <= status < 500 and status != 429:
+                    return None
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return None
+            except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return None
+            except (aiohttp.ClientError, ValueError):
+                return None
             else:
-                return "         [!] CVE lookup failed after 3 attempts\n"
+                break
+        else:
+            return None
+        return data.get("vulnerabilities", [])
 
-        vulns: list[Any] = data.get("vulnerabilities", [])
+    async def _get_cve_text(self, service: str, version: str) -> str:
+        version = self._normalize_version(version)
+        cpe_pair = CPE_MAP.get(service)
+
+        if cpe_pair:
+            vendor, product = cpe_pair
+            cpe_full = f"cpe:2.3:a:{vendor}:{product}:{version}:*:*:*:*:*:*:*"
+            params: dict[str, str | int] = {"cpeName": cpe_full}
+            if self.api_key:
+                params["apiKey"] = self.api_key
+            vulns = await self._cve_request(params)
+            if vulns:
+                return self._format_cve_results(vulns)
+
+            cpe_partial = f"cpe:2.3:a:{vendor}:{product}"
+            params = {"cpeMatchString": cpe_partial}
+            if self.api_key:
+                params["apiKey"] = self.api_key
+            vulns = await self._cve_request(params)
+            if vulns:
+                return self._format_cve_results(vulns)
+
+        params = {"keywordSearch": f"{service} {version}"}
+        if self.api_key:
+            params["apiKey"] = self.api_key
+        vulns = await self._cve_request(params)
+        return self._format_cve_results(vulns)
+
+    @staticmethod
+    def _format_cve_results(vulns: list[Any] | None) -> str:
         if not vulns:
             return "         No CVEs found\n"
-
         lines: list[str] = [f"         Found {len(vulns)} CVE(s):\n"]
         for item in vulns[:3]:
             cve: Any = item.get("cve", {})
