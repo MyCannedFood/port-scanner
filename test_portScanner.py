@@ -62,6 +62,36 @@ class TestParseBanner:
         assert s is None
         assert v is None
 
+    def test_smtp_postfix(self):
+        s, v = PortScanner._parse_banner(b"220 mail.example.com ESMTP Postfix (Ubuntu)\r\n")
+        assert s == "Postfix"
+        assert v is not None
+
+    def test_smtp_exim(self):
+        s, v = PortScanner._parse_banner(b"220 mx.example.com ESMTP Exim 4.94\r\n")
+        assert s == "Exim"
+        assert v is not None
+
+    def test_imap_dovecot(self):
+        s, v = PortScanner._parse_banner(b"* OK [CAPABILITY IMAP4rev1] Dovecot (Ubuntu) ready\r\n")
+        assert s == "Dovecot"
+        assert v is not None
+
+    def test_imap_cyrus(self):
+        s, v = PortScanner._parse_banner(b"* OK [CAPABILITY IMAP4] Cyrus IMAP v2.5.15\r\n")
+        assert s == "Cyrus"
+        assert v is not None
+
+    def test_pop3_dovecot(self):
+        s, v = PortScanner._parse_banner(b"+OK Dovecot (Ubuntu) ready\r\n")
+        assert s == "Dovecot"
+        assert v is not None
+
+    def test_http_response_line(self):
+        s, v = PortScanner._parse_banner(b"HTTP/1.1 200 OK\r\n")
+        assert s == "OK"
+        assert v is not None
+
 
 class MockAiohttpResponse:
     def __init__(self, status=200, json_data=None, headers=None):

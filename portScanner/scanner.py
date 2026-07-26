@@ -54,6 +54,10 @@ BANNER_PATTERNS: list[re.Pattern[bytes]] = [
     re.compile(rb"SSH-[\d.]+-(\w[\w.-]*?)[_ ](\d[\w.]*)"),
     re.compile(rb"220[- ](\w[\w.-]*) ([\d.]+)"),
     re.compile(rb"Server:\s*(\w[\w.-]+)/([\d.]+)", re.IGNORECASE),
+    re.compile(rb"220[\s-]\S+\s+ESMTP\s+(Postfix|Exim|Sendmail|Courier)\b", re.IGNORECASE),
+    re.compile(rb"\* OK\s+\[.*?\]\s+(Dovecot|Cyrus)\s+", re.IGNORECASE),
+    re.compile(rb"\+OK\s+(Dovecot)\s+", re.IGNORECASE),
+    re.compile(rb"HTTP/1\.[01]\s+\d+\s+(\w+)"),
     re.compile(rb"(\w[\w.-]+)/([\d.]+)"),
     re.compile(rb"(\w[\w.-]+)\s+v?([\d.]+)"),
 ]
@@ -263,7 +267,7 @@ class PortScanner:
             match = pattern.search(banner)
             if match:
                 svc = match.group(1).decode("utf-8", errors="replace")
-                ver = match.group(2).decode("utf-8", errors="replace")
+                ver = match.group(2).decode("utf-8", errors="replace") if match.lastindex and match.lastindex >= 2 else "unknown"
                 return svc, ver
         return None, None
 
@@ -272,6 +276,14 @@ class PortScanner:
         if port in {80, 8000, 8080, 8888}:
             host: str = f"[{ip}]" if ":" in ip else ip
             return f"GET / HTTP/1.0\r\nHost: {host}\r\n\r\n".encode()
+        if port in {6379}:
+            return b"PING\r\n"
+        if port in {25, 587}:
+            return b"EHLO scanner\r\n"
+        if port in {143}:
+            return b"A001 CAPABILITY\r\n"
+        if port in {110}:
+            return b"CAPA\r\n"
         return b"\r\n"
 
     @staticmethod
