@@ -11,7 +11,8 @@ import sys
 import time
 from io import StringIO
 
-from portScanner.scanner import (
+from portScanner.scanner import PortScanner, logger
+from portScanner.utils import (
     DEFAULT_DELAY,
     DEFAULT_MAX_RATE,
     DEFAULT_PORT_END,
@@ -20,9 +21,7 @@ from portScanner.scanner import (
     DEFAULT_THREADS,
     DEFAULT_TIMEOUT,
     TIMING_PROFILES,
-    PortScanner,
     expand_targets,
-    logger,
     parse_port_spec,
 )
 

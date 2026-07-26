@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from portScanner.scanner import SERVICE_PORTS, PortScanner
+from portScanner.scanner import PortScanner
+from portScanner.utils import SERVICE_PORTS
 
 
 @pytest.fixture

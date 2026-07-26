@@ -9,14 +9,14 @@ Async TCP port scanner with banner grabbing, service detection, and CVE lookup.
 - **Async concurrent scanning** — uses `asyncio` for efficient I/O-bound port scanning
 - **Banner grabbing** — captures service banners from open ports with regex-based parsing
 - **Service detection** — fallback to well-known port mapping when banner parsing fails
-- **CVE lookup** — queries NVD API for known vulnerabilities with rate limiting and retry
+- **CVE lookup** — CPE-based matching for known services with NVD API rate limiting and retry
 - **Flexible port specification** — ranges (`1-1000`), comma lists (`22,80,443`), named sets (`common`, `all`)
 - **CIDR & multi-target** — scan entire subnets or load targets from a file
 - **Timing profiles** — preset profiles 0–5 (paranoid to insane)
 - **Multiple output formats** — text, JSON, or CSV
 - **Progress bar** — real-time scan progress with `tqdm`
 - **Overall scan timeout** — prevent hangs with `--scan-timeout`
-- **Rate limiting** — respects NVD API limits (6s interval without key, 0.6s with key)
+- **Scanner rate limiting** — control connections per second with `--max-rate` (token bucket)
 - **IPv6 support** — force IPv6 resolution with `--ipv6`
 - **Verbose mode** — `--verbose` for debug-level logging to aid troubleshooting
 
@@ -59,6 +59,7 @@ port-scanner <target> [options]
 | `--delay` | 0 | Delay between scans in seconds |
 | `-T, --timing` | — | Timing profile 0–5 (paranoid→insane, overrides timeout/threads/delay) |
 | `-f, --format` | text | Output format: `text`, `json`, or `csv` |
+| `--max-rate` | 0 | Max connections per second (0 = unlimited, token bucket) |
 | `-o, --output` | — | Save results to file |
 | `--scan-timeout` | 0 | Total scan timeout in seconds (0 = no limit) |
 | `-6, --ipv6` | — | Force IPv6 resolution |
@@ -116,6 +117,9 @@ port-scanner scanme.nmap.org -f json -o results.json
 
 # Export results as CSV
 port-scanner scanme.nmap.org -f csv -o results.csv
+
+# Limit to 10 connections per second
+port-scanner 192.168.1.1 --max-rate 10
 
 # Scan with overall timeout
 port-scanner scanme.nmap.org --scan-timeout 60
@@ -185,9 +189,11 @@ ruff check portScanner/ test_portScanner.py
 
 ## Notes
 
-- Banner grabbing sends `\r\n` (or HTTP GET on web ports) and reads up to 4096 bytes
-- CVE lookup is limited to the first 3 results per service and normalizes versions for broader matching
-- Use `--delay` or timing profiles to rate-limit scans and avoid being blocked
+- Banner grabbing sends protocol-appropriate probes: `\r\n` (generic), `GET / HTTP/1.0` (HTTP), `EHLO` (SMTP), `PING` (Redis), `CAPABILITY` (IMAP), `CAPA` (POP3)
+- Banner response is read up to 4096 bytes; service detection uses regex patterns for SSH, FTP, HTTP, SMTP, IMAP, POP3, and generic name/version
+- CVE lookup uses CPE exact matching for known services (OpenSSH, Apache, nginx, Postfix, Dovecot, Exim, etc.) with fallback to `cpeMatchString` then keyword search
+- CVE results are limited to the first 3 per service; versions are normalized to major.minor for broader matching
+- Use `--delay`, `--max-rate`, or timing profiles to control scan aggressiveness
 - NVD API rate limits apply: 5 req/30s without key, 50 req/30s with key
 - IPv6 is supported natively via `getaddrinfo`; use `--ipv6` to force IPv6 resolution
 - CIDR notation expands to all host addresses in the network
